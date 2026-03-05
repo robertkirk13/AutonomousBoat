@@ -8,7 +8,7 @@ INTERVAL = 1.0
 
 # Shunt / calibration
 R_SHUNT = 0.001      # 1 mOhm
-MAX_CURRENT = 40.0    # 40 A
+MAX_CURRENT = 35.0    # 35 A
 CURRENT_LSB = MAX_CURRENT / (2**19)  # ~76.29 uA/LSB
 
 # INA228 register addresses
