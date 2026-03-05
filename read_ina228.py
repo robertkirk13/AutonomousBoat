@@ -3,7 +3,7 @@ import time
 import sys
 
 I2C_BUS = 1
-SENSORS = {"Left": 0x44, "Right": 0x45, "Aux": 0x40}
+SENSORS = {"Left Motor": 0x40, "Right Motor": 0x41, "Left Battery": 0x44, "Right Battery": 0x45}
 INTERVAL = 1.0
 
 # Shunt / calibration
