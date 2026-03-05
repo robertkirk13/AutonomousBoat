@@ -6,17 +6,23 @@ LINE = 21
 TOGGLE_HZ = 5
 PERIOD = 1.0 / TOGGLE_HZ
 
-chip = gpiod.Chip(CHIP)
-line = chip.get_line(LINE)
-line.request(consumer="toggle_gpio21", type=gpiod.LINE_REQ_DIR_OUT)
+request = gpiod.request_lines(
+    CHIP,
+    consumer="toggle_gpio21",
+    config={LINE: gpiod.LineSettings(direction=gpiod.line.Direction.OUTPUT)},
+)
 
 try:
-    value = 0
+    value = gpiod.line.Value.INACTIVE
     while True:
-        value ^= 1
-        line.set_value(value)
+        value = (
+            gpiod.line.Value.ACTIVE
+            if value == gpiod.line.Value.INACTIVE
+            else gpiod.line.Value.INACTIVE
+        )
+        request.set_value(LINE, value)
         time.sleep(PERIOD)
 except KeyboardInterrupt:
-    line.set_value(0)
+    request.set_value(LINE, gpiod.line.Value.INACTIVE)
 finally:
-    line.release()
+    request.release()
