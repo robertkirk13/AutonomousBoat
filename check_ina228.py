@@ -32,8 +32,24 @@ print(f"Config:          0x{cfg:04X}")
 shunt_raw = read_24bit(0x04)
 print(f"Shunt voltage raw: {shunt_raw} (0x{shunt_raw:06X})")
 
-# Bus voltage raw (0x05)
-vbus_raw = read_24bit(0x05)
+# Bus voltage raw (0x05) - dump individual bytes
+vbus_bytes = bus.read_i2c_block_data(ADDRESS, 0x05, 3)
+print(f"Bus voltage bytes: [{vbus_bytes[0]:02X}, {vbus_bytes[1]:02X}, {vbus_bytes[2]:02X}]")
+vbus_raw = (vbus_bytes[0] << 16) | (vbus_bytes[1] << 8) | vbus_bytes[2]
 print(f"Bus voltage raw:   {vbus_raw} (0x{vbus_raw:06X})")
+# Try interpreting different ways
+print(f"  >> 4 * 195.3125uV = {(vbus_raw >> 4) * 195.3125e-6:.4f} V")
+print(f"  no shift * 195.3125uV = {vbus_raw * 195.3125e-6:.4f} V")
+
+# Also try reading VBUS as 16-bit (reg 0x05) in case it's not 24-bit on this rev
+vbus_16 = read_16bit(0x05)
+print(f"Bus voltage 16bit: 0x{vbus_16:04X} = {vbus_16}")
+print(f"  * 195.3125uV = {vbus_16 * 195.3125e-6:.4f} V")
+print(f"  >> 4 * 195.3125uV = {(vbus_16 >> 4) * 195.3125e-6:.4f} V")
+print(f"  * 1.6mV (INA226 scale) = {vbus_16 * 1.6e-3:.4f} V")
+
+# ADC config register (0x01)
+adc_cfg = read_16bit(0x01)
+print(f"ADC Config:        0x{adc_cfg:04X}")
 
 bus.close()
