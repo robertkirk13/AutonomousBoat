@@ -46,10 +46,17 @@ for name, addr in SENSORS.items():
     except OSError as e:
         print(f"Warning: {name} (0x{addr:02X}) not responding: {e}")
 
+energy_wh = {name: 0.0 for name in SENSORS}
+
 print()
 
 try:
+    last_time = time.monotonic()
     while True:
+        now = time.monotonic()
+        dt_h = (now - last_time) / 3600.0
+        last_time = now
+
         parts = []
         for name, addr in SENSORS.items():
             try:
@@ -63,7 +70,9 @@ try:
                 power_raw = read_24bit(addr, REG_POWER)
                 power_w = power_raw * 3.2 * CURRENT_LSB
 
-                parts.append(f"{name}: {vbus_v:.2f}V {current_a:.3f}A {power_w:.2f}W")
+                energy_wh[name] += power_w * dt_h
+
+                parts.append(f"{name}: {vbus_v:.2f}V {current_a:.3f}A {power_w:.2f}W {energy_wh[name]:.4f}Wh")
             except OSError:
                 parts.append(f"{name}: ERROR")
         print("  |  ".join(parts))
