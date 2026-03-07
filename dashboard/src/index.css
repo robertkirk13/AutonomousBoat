@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Menlo, monospace;
+
+  --color-panel: oklch(0.14 0.005 260);
+  --color-panel-border: oklch(0.22 0.005 260);
+  --color-surface: oklch(0.18 0.005 260);
+  --color-teal: oklch(0.72 0.14 185);
+  --color-teal-dim: oklch(0.45 0.08 185);
+}
+
+:root {
+  --background: #08090d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--background);
+  color: #e2e8f0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+/* Leaflet */
+.leaflet-container {
+  background: #0a0c14 !important;
+  font-family: inherit;
+}
+
+.leaflet-control-attribution {
+  background: rgba(0,0,0,0.6) !important;
+  backdrop-filter: blur(8px);
+  color: rgba(255,255,255,0.3) !important;
+  border-radius: 8px !important;
+  padding: 3px 8px !important;
+  margin: 10px !important;
+  border: 1px solid rgba(255,255,255,0.06) !important;
+  font-size: 9px !important;
+}
+
+.leaflet-control-attribution a {
+  color: rgba(255,255,255,0.4) !important;
+}
+
+.leaflet-control-zoom {
+  border: none !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5) !important;
+  margin: 10px !important;
+}
+
+.leaflet-control-zoom a {
+  background: rgba(8,9,13,0.85) !important;
+  backdrop-filter: blur(8px);
+  color: rgba(255,255,255,0.5) !important;
+  border: 1px solid rgba(255,255,255,0.06) !important;
+  width: 36px !important;
+  height: 36px !important;
+  line-height: 34px !important;
+  font-size: 16px !important;
+  font-weight: 300 !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: rgba(8,9,13,0.95) !important;
+  color: white !important;
+}
+
+.leaflet-control-zoom-in { border-radius: 10px 10px 0 0 !important; border-bottom: none !important; }
+.leaflet-control-zoom-out { border-radius: 0 0 10px 10px !important; }
+
+.boat-marker, .waypoint-marker, .polygon-vertex-marker, .user-location-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.leaflet-marker-icon {
+  transition: transform 0.1s ease-out;
+}
+
+.leaflet-container * {
+  user-select: none;
+}

@@ -1,0 +1,34 @@
+[package]
+name = "boat-firmware"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["hw"]
+sim = []
+hw = ["dep:linux-embedded-hal", "dep:embedded-hal", "dep:ssd1306", "dep:embedded-graphics", "dep:rppal", "dep:libc"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+tokio-util = "0.7"
+rumqttc = "0.24"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dotenvy = "0.15"
+tokio-rustls = "0.25"
+rustls-native-certs = "0.7"
+
+# Linux-only deps (gated behind "hw" feature)
+linux-embedded-hal = { version = "0.4", optional = true }
+embedded-hal = { version = "1.0", optional = true }
+ssd1306 = { version = "0.9", optional = true }
+embedded-graphics = { version = "0.8", optional = true }
+rppal = { version = "0.19", features = ["hal"], optional = true }
+libc = { version = "0.2", optional = true }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

@@ -1,0 +1,12 @@
+# Rust
+firmware/target/
+
+# Node
+dashboard/node_modules/
+dashboard/dist/
+simulator/node_modules/
+simulator/dist/
+
+# Environment
+.env
+.env.local
