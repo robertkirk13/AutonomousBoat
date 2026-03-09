@@ -3,7 +3,17 @@ import time
 import sys
 
 I2C_BUS = 1
-SENSORS = {"Left Motor": 0x40, "Right Motor": 0x41, "Left Battery": 0x44, "Right Battery": 0x45, "Solar": 0x46}
+SENSORS = {
+    "Left Motor":   0x40,  # U1  - LMOTOR_OUT
+    "Right Motor":  0x41,  # U6  - RMOTOR_OUT
+    "Payload":      0x42,  # U7  - VPAYLOAD
+    "Reel":         0x43,  # U8  - VREEL
+    "Left Battery": 0x44,  # U9  - VLBATT
+    "Right Battery":0x45,  # U10 - VRBATT
+    "Solar":        0x46,  # U11 - VSOLAR
+    "Dock Charger": 0x47,  # U12 - VDOCK
+    "Core Digital": 0x48,  # U13 - VCORE
+}
 INTERVAL = 1.0
 
 # Shunt / calibration
