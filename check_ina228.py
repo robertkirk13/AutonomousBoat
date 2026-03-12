@@ -2,8 +2,15 @@ import smbus2
 
 I2C_BUS = 1
 ADDRESSES = {
+    0x40: "left_motor",
+    0x41: "right_motor",
+    0x42: "payload",
+    0x43: "reel",
+    0x44: "left_battery",
     0x45: "right_battery",
     0x46: "solar",
+    0x47: "dock_charger",
+    0x48: "core_digital",
 }
 
 bus = smbus2.SMBus(I2C_BUS)
