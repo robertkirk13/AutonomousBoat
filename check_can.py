@@ -75,15 +75,21 @@ def init_can(bitrate_500k=True):
         return False
 
     if bitrate_500k:
-        # 500 kbps with 8 MHz oscillator: TQ=2, propSeg=1, PS1=1, PS2=1, SJW=1
-        write_reg(REG_CNF1, 0x00)  # SJW=1, BRP=0 -> TQ = 2/Fosc = 250ns
-        write_reg(REG_CNF2, 0x90)  # BTLMODE=1, SAM=0, PHSEG1=2, PRSEG=0
-        write_reg(REG_CNF3, 0x02)  # PHSEG2=2
+        # 500 kbps with 16 MHz oscillator (8 TQ per bit)
+        # BRP=0 -> TQ = 2/16MHz = 125ns, SJW=1
+        # PropSeg=2, PS1=3, PS2=2 -> 1+2+3+2 = 8 TQ -> 500kbps
+        write_reg(REG_CNF1, 0x00)  # SJW=1, BRP=0
+        write_reg(REG_CNF2, 0x91)  # BTLMODE=1, SAM=0, PHSEG1=2, PRSEG=1
+        write_reg(REG_CNF3, 0x01)  # PHSEG2=1
     else:
-        # 250 kbps with 8 MHz oscillator
-        write_reg(REG_CNF1, 0x01)  # BRP=1 -> TQ = 4/Fosc = 500ns
-        write_reg(REG_CNF2, 0x90)
-        write_reg(REG_CNF3, 0x02)
+        # 250 kbps with 16 MHz oscillator (16 TQ per bit)
+        # BRP=1 -> TQ = 4/16MHz = 250ns, SJW=1
+        write_reg(REG_CNF1, 0x01)  # SJW=1, BRP=1
+        write_reg(REG_CNF2, 0x91)  # BTLMODE=1, SAM=0, PHSEG1=2, PRSEG=1
+        write_reg(REG_CNF3, 0x01)  # PHSEG2=1
+
+    # One-shot mode: don't retry on failed TX (avoids buffer stuck busy without ACK)
+    bit_modify(REG_CANCTRL, 0x08, 0x08)  # OSM bit
 
     # Disable all interrupts for polling mode
     write_reg(REG_CANINTE, 0x00)
