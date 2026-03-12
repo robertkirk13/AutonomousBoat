@@ -76,15 +76,15 @@ def init_can(bitrate_500k=True):
 
     if bitrate_500k:
         # 500 kbps with 16 MHz oscillator (8 TQ per bit)
-        # BRP=0 -> TQ = 2/16MHz = 125ns, SJW=1
-        # PropSeg=2, PS1=3, PS2=2 -> 1+2+3+2 = 8 TQ -> 500kbps
-        write_reg(REG_CNF1, 0x00)  # SJW=1, BRP=0
+        # BRP=1 -> TQ = 2*(1+1)/16MHz = 250ns, SJW=1
+        # SyncSeg=1, PropSeg=2, PS1=3, PS2=2 -> 1+2+3+2 = 8 TQ -> 500kbps
+        write_reg(REG_CNF1, 0x01)  # SJW=1, BRP=1
         write_reg(REG_CNF2, 0x91)  # BTLMODE=1, SAM=0, PHSEG1=2, PRSEG=1
         write_reg(REG_CNF3, 0x01)  # PHSEG2=1
     else:
-        # 250 kbps with 16 MHz oscillator (16 TQ per bit)
-        # BRP=1 -> TQ = 4/16MHz = 250ns, SJW=1
-        write_reg(REG_CNF1, 0x01)  # SJW=1, BRP=1
+        # 250 kbps with 16 MHz oscillator (8 TQ per bit)
+        # BRP=3 -> TQ = 2*(3+1)/16MHz = 500ns, SJW=1
+        write_reg(REG_CNF1, 0x03)  # SJW=1, BRP=3
         write_reg(REG_CNF2, 0x91)  # BTLMODE=1, SAM=0, PHSEG1=2, PRSEG=1
         write_reg(REG_CNF3, 0x01)  # PHSEG2=1
 

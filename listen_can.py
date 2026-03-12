@@ -114,8 +114,8 @@ try:
     if stat != 0x80:
         raise RuntimeError(f"Not in config mode after reset (0x{stat:02X})")
 
-    # 500kbps with 16 MHz oscillator
-    write_reg(REG_CNF1, 0x00)
+    # 500kbps with 16 MHz oscillator (BRP=1, 8 TQ per bit)
+    write_reg(REG_CNF1, 0x01)
     write_reg(REG_CNF2, 0x91)
     write_reg(REG_CNF3, 0x01)
 
