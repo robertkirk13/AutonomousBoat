@@ -113,3 +113,21 @@ pub struct MotorCommand {
     pub left: f64,
     pub right: f64,
 }
+
+// --- CAN bus ---
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CanFrame {
+    pub id: u16,
+    pub rtr: bool,
+    pub dlc: u8,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct CanState {
+    pub connected: bool,
+    pub rx_count: u64,
+    pub tx_count: u64,
+    pub last_error: Option<String>,
+}

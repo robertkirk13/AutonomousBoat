@@ -1,3 +1,4 @@
+pub mod can;
 pub mod display;
 pub mod imu;
 pub mod nav;

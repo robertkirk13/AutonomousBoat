@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = ["hw"]
 sim = []
-hw = ["dep:linux-embedded-hal", "dep:embedded-hal", "dep:ssd1306", "dep:embedded-graphics", "dep:rppal", "dep:libc"]
+hw = ["dep:rppal", "dep:libc", "dep:spidev"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
@@ -21,12 +21,9 @@ tokio-rustls = "0.25"
 rustls-native-certs = "0.7"
 
 # Linux-only deps (gated behind "hw" feature)
-linux-embedded-hal = { version = "0.4", optional = true }
-embedded-hal = { version = "1.0", optional = true }
-ssd1306 = { version = "0.9", optional = true }
-embedded-graphics = { version = "0.8", optional = true }
 rppal = { version = "0.19", features = ["hal"], optional = true }
 libc = { version = "0.2", optional = true }
+spidev = { version = "0.6", optional = true }
 
 [profile.release]
 opt-level = "s"

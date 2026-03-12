@@ -5,7 +5,7 @@ pub const I2C_BUS: &str = "/dev/i2c-1";
 
 // I2C addresses
 pub const BNO055_ADDR: u16 = 0x28;
-pub const SSD1306_ADDR: u16 = 0x3C;
+// SSD1306 (0x3C) is handled by Python ssd1306-dashboard.service
 
 // INA228 addresses and labels
 pub const INA228_CHANNELS: &[(u16, &str)] = &[
@@ -60,3 +60,12 @@ pub const NAV_INTERVAL: Duration = Duration::from_millis(200); // 5Hz
 pub const GPS_INTERVAL: Duration = Duration::from_secs(1);     // 1Hz publish
 pub const WAYPOINT_REACHED_M: f64 = 3.0;                       // meters
 pub const MAX_SPEED_MPS: f64 = 2.0;
+
+// MCP2515 CAN controller (SPI bus 0, CE0, 16MHz crystal)
+pub const CAN_SPI_DEV: &str = "/dev/spidev0.0";
+pub const CAN_SPI_SPEED_HZ: u32 = 1_000_000;
+pub const CAN_POLL_INTERVAL: Duration = Duration::from_millis(1);
+pub const CAN_TX_ID: u16 = 0x100;
+
+// MQTT CAN topic
+pub const TOPIC_CAN: &str = "boat/can";

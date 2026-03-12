@@ -1,21 +1,11 @@
-use crate::types::{EulerAngles, PowerState, ThermalState};
-use tokio::sync::watch;
+/// OLED display is handled by the Python systemd service (ssd1306-dashboard.service).
+/// The SSD1306 is write-only on I2C and needs blocking access, which doesn't fit
+/// our async I2C bus owner pattern. The Python service provides a full dashboard
+/// with power readings, wifi status, and WILSON branding.
 use tokio_util::sync::CancellationToken;
 
-/// OLED display task. Watches sensor state and renders to SSD1306.
-/// For now, this is a stub — actual rendering requires spawn_blocking
-/// with the ssd1306 crate since it needs blocking I2C.
-pub async fn run(
-    _imu_rx: watch::Receiver<Option<EulerAngles>>,
-    _power_rx: watch::Receiver<PowerState>,
-    _thermal_rx: watch::Receiver<ThermalState>,
-    cancel: CancellationToken,
-) {
-    tracing::info!("Display task started (stub)");
-
-    // TODO: Initialize SSD1306 via blocking I2C adapter, render status pages
-    // For now just wait for shutdown
+pub async fn run(cancel: CancellationToken) {
+    tracing::info!("Display handled by Python ssd1306-dashboard.service");
     cancel.cancelled().await;
-
     tracing::info!("Display task stopped");
 }

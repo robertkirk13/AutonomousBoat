@@ -58,6 +58,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mission_tx, mission_rx) = watch::channel(Mission::default());
     let (motor_tx, motor_rx) = watch::channel(MotorCommand::default());
     let (teleop_tx, teleop_rx) = watch::channel(MotorCommand::default());
+    let (can_state_tx, _can_state_rx) = watch::channel(CanState::default());
+
+    // CAN TX request channel (other tasks can send CAN frames)
+    let (can_tx, can_tx_rx) = mpsc::channel::<tasks::can::CanTxRequest>(32);
+    // CAN RX frame channel (received frames forwarded here)
+    let (can_frame_tx, _can_frame_rx) = mpsc::channel::<CanFrame>(64);
 
     // --- Fan GPIO (hw only) ---
     #[cfg(feature = "hw")]
@@ -98,10 +104,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cancel.clone(),
     ));
 
-    let display_handle = tokio::spawn(tasks::display::run(
-        imu_rx.clone(),
-        power_rx.clone(),
-        thermal_rx.clone(),
+    // Display is handled by Python ssd1306-dashboard.service
+    let display_handle = tokio::spawn(tasks::display::run(cancel.clone()));
+
+    // --- CAN bus (MCP2515 over SPI) ---
+    let can_handle = tokio::spawn(tasks::can::run(
+        can_tx_rx,
+        can_state_tx,
+        can_frame_tx,
         cancel.clone(),
     ));
 
@@ -171,6 +181,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Suppress unused warnings for CAN channel handles
+    let _ = can_tx;
+    let _ = _can_state_rx;
+    let _ = _can_frame_rx;
+
     // --- Wait for shutdown signal ---
     tokio::signal::ctrl_c().await?;
     tracing::info!("Shutdown signal received");
@@ -182,6 +197,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = power_handle.await;
         let _ = thermal_handle.await;
         let _ = display_handle.await;
+        let _ = can_handle.await;
         let _ = nav_handle.await;
         #[cfg(feature = "sim")]
         let _ = sim_gps_handle.await;
