@@ -98,24 +98,40 @@ HEART = [
     0x0C, 0x1E, 0x3E, 0x7C, 0x7C, 0x3E, 0x1E, 0x0C,
 ]
 
-def draw_text(text, page, col):
+def set_cursor(page, col):
     send_command(0xB0 + page)
     send_command(0x00 | (col & 0x0F))
     send_command(0x10 | ((col >> 4) & 0x0F))
+
+def draw_text(text, page, col):
+    set_cursor(page, col)
     buf = []
     for ch in text:
         buf.extend(FONT.get(ch, FONT[' ']))
         buf.append(0x00)
     send_data(buf)
 
+def draw_text_padded(text, page, col, width):
+    """Draw text and pad with blanks to fill exactly `width` pixels."""
+    set_cursor(page, col)
+    buf = []
+    for ch in text:
+        buf.extend(FONT.get(ch, FONT[' ']))
+        buf.append(0x00)
+    # Pad remaining pixels with zeros
+    if len(buf) < width:
+        buf.extend([0x00] * (width - len(buf)))
+    send_data(buf[:width])
+
 def draw_bitmap(bitmap, page, col):
-    send_command(0xB0 + page)
-    send_command(0x00 | (col & 0x0F))
-    send_command(0x10 | ((col >> 4) & 0x0F))
+    set_cursor(page, col)
     send_data(bitmap)
 
 def text_width(text):
     return len(text) * 6  # 5px glyph + 1px spacing
+
+# Track previous values to only redraw what changed
+prev = {}
 
 # ── INA228 functions ──
 
@@ -170,14 +186,35 @@ for addr in [INA_DOCK, INA_LBATT, INA_LMOTOR, INA_CORE, INA_SOLAR, INA_RBATT, IN
     except OSError:
         pass
 
+# ── Layout constants ──
+# Each field: (page, col, width_px)
+# Left-aligned fields start at col 0, right-aligned end at col 128
+FIELD_W = 42   # enough for "+00.00W" (7 chars * 6px)
+SOC_W = 30     # enough for "100%" (4 chars * 6px)
+
+def update_field(key, text, page, col, width):
+    """Only redraw if the text changed since last frame."""
+    if prev.get(key) != text:
+        draw_text_padded(text, page, col, width)
+        prev[key] = text
+
 # ── Main loop ──
 
 init_display()
+clear_display()
+
+# Draw static elements once
+state = "Ready"
+state_col = (WIDTH - text_width(state)) // 2
+draw_text(state, page=0, col=state_col)
+
+heart_karen_w = 8 + 2 + text_width("Karen")
+hk_col = (WIDTH - heart_karen_w) // 2
+draw_bitmap(HEART, page=3, col=hk_col)
+draw_text("Karen", page=3, col=hk_col + 10)
 
 try:
     while True:
-        clear_display()
-
         # Read all sensors
         readings = {}
         for name, addr in [
@@ -190,50 +227,28 @@ try:
             except OSError:
                 readings[name] = (0, 0, 0)
 
-        # === Page 0 (top row): DOCK left, "Ready" center, SOLAR right ===
-        dock_w = fmt_power(readings["DOCK"][2])
-        draw_text("DOK" + dock_w, page=0, col=0)
+        # === Page 0 (top): DOCK power left, SOLAR power right ===
+        update_field("dock", fmt_power(readings["DOCK"][2]), 0, 0, FIELD_W)
+        sol_t = fmt_power(readings["SOL"][2])
+        update_field("sol", sol_t, 0, WIDTH - FIELD_W, FIELD_W)
 
-        # "Ready" centered
-        state = "Ready"
-        state_col = (WIDTH - text_width(state)) // 2
-        draw_text(state, page=0, col=state_col)
-
-        sol_w = fmt_power(readings["SOL"][2])
-        sol_text = "SOL" + sol_w
-        draw_text(sol_text, page=0, col=WIDTH - text_width(sol_text))
-
-        # === Page 2-3 (middle): LBATT left, heart+Karen center, RBATT right ===
+        # === Page 2-3 (middle): LBATT left, RBATT right ===
         lbat_v, _, lbat_p = readings["LBAT"]
-        lbat_soc = estimate_soc(lbat_v)
-        draw_text(fmt_power(lbat_p), page=2, col=0)
-        draw_text(f"{lbat_soc:.0f}%", page=3, col=0)
-
-        # Heart + Karen centered
-        heart_karen_w = 8 + 2 + text_width("Karen")  # heart + gap + text
-        start_col = (WIDTH - heart_karen_w) // 2
-        draw_bitmap(HEART, page=3, col=start_col)
-        draw_text("Karen", page=3, col=start_col + 10)
+        update_field("lbat_p", fmt_power(lbat_p), 2, 0, FIELD_W)
+        update_field("lbat_s", f"{estimate_soc(lbat_v):.0f}%", 3, 0, SOC_W)
 
         rbat_v, _, rbat_p = readings["RBAT"]
-        rbat_soc = estimate_soc(rbat_v)
-        rbat_pw = fmt_power(rbat_p)
-        draw_text(rbat_pw, page=2, col=WIDTH - text_width(rbat_pw))
-        rbat_soc_t = f"{rbat_soc:.0f}%"
-        draw_text(rbat_soc_t, page=3, col=WIDTH - text_width(rbat_soc_t))
+        update_field("rbat_p", fmt_power(rbat_p), 2, WIDTH - FIELD_W, FIELD_W)
+        update_field("rbat_s", f"{estimate_soc(rbat_v):.0f}%", 3, WIDTH - SOC_W, SOC_W)
 
-        # === Page 6-7 (bottom): LMOTOR left, CORE center, RMOTOR right ===
-        lmot_w = fmt_power(readings["LMOT"][2])
-        draw_text("LM" + lmot_w, page=6, col=0)
+        # === Page 6 (bottom): LMOTOR left, CORE center, RMOTOR right ===
+        update_field("lmot", fmt_power(readings["LMOT"][2]), 6, 0, FIELD_W)
 
-        core_w = fmt_power(readings["CORE"][2])
-        core_text = "CORE" + core_w
-        core_col = (WIDTH - text_width(core_text)) // 2
-        draw_text(core_text, page=6, col=core_col)
+        core_t = fmt_power(readings["CORE"][2])
+        core_col = (WIDTH - FIELD_W) // 2
+        update_field("core", core_t, 6, core_col, FIELD_W)
 
-        rmot_w = fmt_power(readings["RMOT"][2])
-        rmot_text = "RM" + rmot_w
-        draw_text(rmot_text, page=6, col=WIDTH - text_width(rmot_text))
+        update_field("rmot", fmt_power(readings["RMOT"][2]), 6, WIDTH - FIELD_W, FIELD_W)
 
         time.sleep(1)
 
