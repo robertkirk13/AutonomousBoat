@@ -1,5 +1,6 @@
 import smbus2
 import time
+import subprocess
 
 I2C_BUS = 1
 DISPLAY_ADDR = 0x3C
@@ -98,6 +99,14 @@ HEART = [
     0x0C, 0x1E, 0x3E, 0x7C, 0x7C, 0x3E, 0x1E, 0x0C,
 ]
 
+# 8x8 wifi icon (concentric arcs)
+WIFI_ON = [
+    0x00, 0x40, 0x20, 0x10, 0x18, 0x10, 0x20, 0x40,
+]
+WIFI_OFF = [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+]
+
 def set_cursor(page, col):
     send_command(0xB0 + page)
     send_command(0x00 | (col & 0x0F))
@@ -166,10 +175,23 @@ def read_power(addr):
 
     return vbus, current, power
 
-def fmt_power(watts):
-    """Format power as signed value with 2 decimals, e.g. '+1.23W' or '-0.45W'"""
+def fmt_power_signed(watts):
+    """Format with +/- sign for batteries."""
     sign = '+' if watts >= 0 else '-'
     return f"{sign}{abs(watts):.2f}W"
+
+def fmt_power_abs(watts):
+    """Format as absolute value for non-battery channels."""
+    return f"{abs(watts):.2f}W"
+
+def check_internet():
+    """Return True if we can reach the internet."""
+    try:
+        subprocess.run(["ping", "-c", "1", "-W", "1", "8.8.8.8"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False
 
 def estimate_soc(voltage):
     """Rough SOC from voltage (assumes ~3S LiFePO4 or similar)"""
@@ -208,10 +230,12 @@ state = "Ready"
 state_col = (WIDTH - text_width(state)) // 2
 draw_text(state, page=0, col=state_col)
 
-heart_karen_w = 8 + 2 + text_width("Karen")
-hk_col = (WIDTH - heart_karen_w) // 2
-draw_bitmap(HEART, page=3, col=hk_col)
-draw_text("Karen", page=3, col=hk_col + 10)
+wilson_w = text_width("WILSON")
+wil_col = (WIDTH - wilson_w) // 2
+draw_text("WILSON", page=3, col=wil_col)
+
+# Wifi icon position: right after "Ready"
+wifi_col = state_col + text_width(state) + 2
 
 try:
     while True:
@@ -227,28 +251,33 @@ try:
             except OSError:
                 readings[name] = (0, 0, 0)
 
-        # === Page 0 (top): DOCK power left, SOLAR power right ===
-        update_field("dock", fmt_power(readings["DOCK"][2]), 0, 0, FIELD_W)
-        sol_t = fmt_power(readings["SOL"][2])
-        update_field("sol", sol_t, 0, WIDTH - FIELD_W, FIELD_W)
+        # === Wifi indicator ===
+        wifi = check_internet()
+        wifi_key = "wifi_on" if wifi else "wifi_off"
+        if prev.get("wifi") != wifi_key:
+            draw_bitmap(WIFI_ON if wifi else WIFI_OFF, page=0, col=wifi_col)
+            prev["wifi"] = wifi_key
 
-        # === Page 2-3 (middle): LBATT left, RBATT right ===
+        # === Page 0 (top): DOCK power left, SOLAR power right ===
+        update_field("dock", fmt_power_abs(readings["DOCK"][2]), 0, 0, FIELD_W)
+        update_field("sol", fmt_power_abs(readings["SOL"][2]), 0, WIDTH - FIELD_W, FIELD_W)
+
+        # === Page 2-3 (middle): LBATT left, RBATT right (signed) ===
         lbat_v, _, lbat_p = readings["LBAT"]
-        update_field("lbat_p", fmt_power(lbat_p), 2, 0, FIELD_W)
+        update_field("lbat_p", fmt_power_signed(lbat_p), 2, 0, FIELD_W)
         update_field("lbat_s", f"{estimate_soc(lbat_v):.0f}%", 3, 0, SOC_W)
 
         rbat_v, _, rbat_p = readings["RBAT"]
-        update_field("rbat_p", fmt_power(rbat_p), 2, WIDTH - FIELD_W, FIELD_W)
+        update_field("rbat_p", fmt_power_signed(rbat_p), 2, WIDTH - FIELD_W, FIELD_W)
         update_field("rbat_s", f"{estimate_soc(rbat_v):.0f}%", 3, WIDTH - SOC_W, SOC_W)
 
         # === Page 6 (bottom): LMOTOR left, CORE center, RMOTOR right ===
-        update_field("lmot", fmt_power(readings["LMOT"][2]), 6, 0, FIELD_W)
+        update_field("lmot", fmt_power_abs(readings["LMOT"][2]), 6, 0, FIELD_W)
 
-        core_t = fmt_power(readings["CORE"][2])
         core_col = (WIDTH - FIELD_W) // 2
-        update_field("core", core_t, 6, core_col, FIELD_W)
+        update_field("core", fmt_power_abs(readings["CORE"][2]), 6, core_col, FIELD_W)
 
-        update_field("rmot", fmt_power(readings["RMOT"][2]), 6, WIDTH - FIELD_W, FIELD_W)
+        update_field("rmot", fmt_power_abs(readings["RMOT"][2]), 6, WIDTH - FIELD_W, FIELD_W)
 
         time.sleep(1)
 
