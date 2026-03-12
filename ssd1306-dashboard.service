@@ -1,8 +1,8 @@
 [Unit]
 Description=SSD1306 OLED Dashboard
-After=sysinit.target
-Before=shutdown.target reboot.target halt.target
-DefaultDependencies=no
+After=local-fs.target
+Conflicts=shutdown.target
+Before=shutdown.target
 
 [Service]
 Type=simple
@@ -12,6 +12,7 @@ WorkingDirectory=/home/chuck/AutonomousBoat
 Restart=on-failure
 RestartSec=5
 User=root
+TimeoutStopSec=10
 
 [Install]
-WantedBy=sysinit.target
+WantedBy=multi-user.target

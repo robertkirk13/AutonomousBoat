@@ -1,6 +1,8 @@
 import smbus2
 import time
 import subprocess
+import signal
+import sys
 
 I2C_BUS = 1
 DISPLAY_ADDR = 0x3C
@@ -240,9 +242,23 @@ def update_field(key, text, page, col, width, align="left"):
             draw_text_padded(text, page, col, width)
         prev[key] = text
 
+# ── Signal handling ──
+
+running = True
+
+def handle_signal(signum, frame):
+    global running
+    print(f"Received signal {signum}, shutting down...", flush=True)
+    running = False
+
+signal.signal(signal.SIGTERM, handle_signal)
+signal.signal(signal.SIGINT, handle_signal)
+
 # ── Main loop ──
 
+print("Initializing display...", flush=True)
 init_display()
+print("Clearing display...", flush=True)
 clear_display()
 
 # Draw static elements once
@@ -253,8 +269,10 @@ draw_text("WILSON", page=3, col=wil_col)
 # Status icons centered on page 0: [check/X] [wifi]
 status_col = (WIDTH - 18) // 2  # 8+2+8 = 18px for two icons
 
-try:
-    while True:
+print("Entering main loop...", flush=True)
+
+while running:
+    try:
         # Read all sensors
         readings = {}
         for name, addr in [
@@ -296,11 +314,16 @@ try:
 
         update_field("rmot", fmt_power_abs(readings["RMOT"][2]), 6, WIDTH - BOT_W, BOT_W, align="right")
 
-        time.sleep(1)
+    except OSError as e:
+        print(f"Display I2C error: {e}", flush=True)
 
-except KeyboardInterrupt:
+    time.sleep(1)
+
+print("Cleaning up...", flush=True)
+try:
     clear_display()
     send_command(0xAE)  # display off
-    print("Stopped.")
-finally:
-    bus.close()
+except OSError:
+    pass
+bus.close()
+print("Stopped.", flush=True)
