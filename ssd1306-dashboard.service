@@ -1,14 +1,17 @@
 [Unit]
 Description=SSD1306 OLED Dashboard
-After=multi-user.target
+After=sysinit.target
+Before=shutdown.target reboot.target halt.target
+DefaultDependencies=no
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 /home/chuck/AutonomousBoat/check_ssd1306.py
+ExecStop=/usr/bin/python3 /home/chuck/AutonomousBoat/ssd1306_shutdown.py
 WorkingDirectory=/home/chuck/AutonomousBoat
 Restart=on-failure
 RestartSec=5
 User=root
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=sysinit.target

@@ -1,0 +1,77 @@
+import smbus2
+import time
+
+I2C_BUS = 1
+DISPLAY_ADDR = 0x3C
+WIDTH = 128
+HEIGHT = 64
+PAGES = HEIGHT // 8
+
+bus = smbus2.SMBus(I2C_BUS)
+
+def send_command(cmd):
+    bus.write_byte_data(DISPLAY_ADDR, 0x00, cmd)
+
+def send_data(data):
+    for i in range(0, len(data), 32):
+        bus.write_i2c_block_data(DISPLAY_ADDR, 0x40, list(data[i:i + 32]))
+
+def init_display():
+    for cmd in [
+        0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40,
+        0x8D, 0x14, 0x20, 0x00, 0xA0, 0xC0, 0xDA, 0x12,
+        0x81, 0xCF, 0xD9, 0xF1, 0xDB, 0x40, 0xA4, 0xA6, 0xAF,
+    ]:
+        send_command(cmd)
+
+def clear_display():
+    send_data([0x00] * (WIDTH * PAGES))
+
+def set_cursor(page, col):
+    send_command(0xB0 + page)
+    send_command(0x00 | (col & 0x0F))
+    send_command(0x10 | ((col >> 4) & 0x0F))
+
+FONT = {
+    ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
+    'S': [0x46, 0x49, 0x49, 0x49, 0x31],
+    'h': [0x7F, 0x08, 0x04, 0x04, 0x78],
+    'u': [0x3C, 0x40, 0x40, 0x20, 0x7C],
+    't': [0x04, 0x3F, 0x44, 0x40, 0x20],
+    'i': [0x00, 0x44, 0x7D, 0x40, 0x00],
+    'n': [0x7C, 0x08, 0x04, 0x04, 0x78],
+    'g': [0x08, 0x54, 0x54, 0x54, 0x3C],
+    'd': [0x38, 0x44, 0x44, 0x48, 0x7F],
+    'o': [0x38, 0x44, 0x44, 0x44, 0x38],
+    'w': [0x3C, 0x40, 0x30, 0x40, 0x3C],
+    '.': [0x00, 0x60, 0x60, 0x00, 0x00],
+}
+
+def draw_text(text, page, col):
+    set_cursor(page, col)
+    buf = []
+    for ch in text:
+        buf.extend(FONT.get(ch, FONT[' ']))
+        buf.append(0x00)
+    send_data(buf)
+
+def text_width(text):
+    return len(text) * 6
+
+try:
+    init_display()
+    clear_display()
+
+    msg = "Shutting down..."
+    col = (WIDTH - text_width(msg)) // 2
+    page = PAGES // 2  # vertically centered
+    draw_text(msg, page=page, col=col)
+
+    # Give time for the message to be visible, then turn off display
+    time.sleep(2)
+    clear_display()
+    send_command(0xAE)  # display off
+except Exception:
+    pass
+finally:
+    bus.close()
