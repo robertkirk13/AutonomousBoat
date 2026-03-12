@@ -159,11 +159,11 @@ try:
     print(f"  CANSTAT=0x{canstat:02X}  CANCTRL=0x{canctrl:02X}")
     print(f"  CNF1=0x{read_reg(REG_CNF1):02X}  CNF2=0x{read_reg(REG_CNF2):02X}  CNF3=0x{read_reg(REG_CNF3):02X}")
 
-    # Use loopback mode for testing without a second CAN node
-    print("\nSwitching to loopback mode...")
-    if not set_mode(0x40):
-        raise RuntimeError("Failed to enter loopback mode")
-    print("  OK — loopback mode active")
+    # Normal mode — transmit on the real bus
+    print("\nSwitching to normal mode...")
+    if not set_mode(0x00):
+        raise RuntimeError("Failed to enter normal mode")
+    print("  OK — normal mode active")
 
     # Send "KAREN BEYER" continuously
     message = "KAREN BEYER"
