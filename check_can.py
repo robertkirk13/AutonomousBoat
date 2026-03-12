@@ -165,28 +165,28 @@ try:
         raise RuntimeError("Failed to enter loopback mode")
     print("  OK — loopback mode active")
 
-    # Send "KAREN BEYER" as CAN frames
+    # Send "KAREN BEYER" continuously
     message = "KAREN BEYER"
     frames = encode_string(message)
     arb_id = 0x100  # arbitrary CAN ID
 
-    print(f"\nSending message: \"{message}\"")
+    print(f"\nSending \"{message}\" continuously (Ctrl+C to stop)")
     print(f"  Arbitration ID: 0x{arb_id:03X}")
-    print(f"  Frames needed: {len(frames)}")
+    print(f"  Frames per cycle: {len(frames)}")
 
-    for i, frame_data in enumerate(frames):
-        ascii_preview = "".join(chr(b) if 32 <= b < 127 else "." for b in frame_data)
-        hex_str = " ".join(f"{b:02X}" for b in frame_data)
-        print(f"  Frame {i}: [{hex_str}] \"{ascii_preview}\"")
+    count = 0
+    while True:
+        count += 1
+        ok_all = True
+        for i, frame_data in enumerate(frames):
+            if not send_message(arb_id + i, frame_data):
+                ok_all = False
+        status = "OK" if ok_all else "FAIL"
+        print(f"  [{count}] {status}", end="\r")
+        time.sleep(0.1)
 
-        ok = send_message(arb_id + i, frame_data)
-        if ok:
-            print(f"    -> sent OK")
-        else:
-            print(f"    -> FAILED")
-        time.sleep(0.01)
-
-    print(f"\nAll frames sent! Message \"{message}\" transmitted on CAN bus.")
+except KeyboardInterrupt:
+    print(f"\n\nStopped after {count} transmissions.")
 
 except Exception as e:
     print(f"\nERROR: {e}")
