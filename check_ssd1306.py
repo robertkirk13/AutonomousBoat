@@ -99,12 +99,19 @@ HEART = [
     0x0C, 0x1E, 0x3E, 0x7C, 0x7C, 0x3E, 0x1E, 0x0C,
 ]
 
-# 8x8 wifi icon (concentric arcs)
+# 8x8 wifi icon (signal arcs + dot)
 WIFI_ON = [
-    0x00, 0x40, 0x20, 0x10, 0x18, 0x10, 0x20, 0x40,
+    0x02, 0x05, 0x12, 0x24, 0x24, 0x12, 0x05, 0x02,
 ]
-WIFI_OFF = [
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+
+# 8x8 checkmark
+ICON_CHECK = [
+    0x00, 0x20, 0x40, 0x40, 0x20, 0x10, 0x08, 0x00,
+]
+
+# 8x8 X mark
+ICON_X = [
+    0x00, 0x41, 0x22, 0x14, 0x08, 0x14, 0x22, 0x41,
 ]
 
 def set_cursor(page, col):
@@ -121,15 +128,26 @@ def draw_text(text, page, col):
     send_data(buf)
 
 def draw_text_padded(text, page, col, width):
-    """Draw text and pad with blanks to fill exactly `width` pixels."""
+    """Draw text left-aligned and pad with blanks to fill exactly `width` pixels."""
     set_cursor(page, col)
     buf = []
     for ch in text:
         buf.extend(FONT.get(ch, FONT[' ']))
         buf.append(0x00)
-    # Pad remaining pixels with zeros
     if len(buf) < width:
         buf.extend([0x00] * (width - len(buf)))
+    send_data(buf[:width])
+
+def draw_text_right(text, page, col, width):
+    """Draw text right-aligned within `width` pixels starting at `col`."""
+    set_cursor(page, col)
+    buf = []
+    for ch in text:
+        buf.extend(FONT.get(ch, FONT[' ']))
+        buf.append(0x00)
+    pad = width - len(buf)
+    if pad > 0:
+        buf = [0x00] * pad + buf
     send_data(buf[:width])
 
 def draw_bitmap(bitmap, page, col):
@@ -209,15 +227,17 @@ for addr in [INA_DOCK, INA_LBATT, INA_LMOTOR, INA_CORE, INA_SOLAR, INA_RBATT, IN
         pass
 
 # ── Layout constants ──
-# Each field: (page, col, width_px)
-# Left-aligned fields start at col 0, right-aligned end at col 128
 FIELD_W = 42   # enough for "+00.00W" (7 chars * 6px)
 SOC_W = 30     # enough for "100%" (4 chars * 6px)
+BOT_W = 36     # bottom row fields (6 chars * 6px), 3 * 36 = 108 < 128
 
-def update_field(key, text, page, col, width):
+def update_field(key, text, page, col, width, align="left"):
     """Only redraw if the text changed since last frame."""
     if prev.get(key) != text:
-        draw_text_padded(text, page, col, width)
+        if align == "right":
+            draw_text_right(text, page, col, width)
+        else:
+            draw_text_padded(text, page, col, width)
         prev[key] = text
 
 # ── Main loop ──
@@ -226,16 +246,12 @@ init_display()
 clear_display()
 
 # Draw static elements once
-state = "Ready"
-state_col = (WIDTH - text_width(state)) // 2
-draw_text(state, page=0, col=state_col)
-
 wilson_w = text_width("WILSON")
 wil_col = (WIDTH - wilson_w) // 2
 draw_text("WILSON", page=3, col=wil_col)
 
-# Wifi icon position: right after "Ready"
-wifi_col = state_col + text_width(state) + 2
+# Status icons centered on page 0: [check/X] [wifi]
+status_col = (WIDTH - 18) // 2  # 8+2+8 = 18px for two icons
 
 try:
     while True:
@@ -251,16 +267,17 @@ try:
             except OSError:
                 readings[name] = (0, 0, 0)
 
-        # === Wifi indicator ===
+        # === Status icons (center top) ===
         wifi = check_internet()
-        wifi_key = "wifi_on" if wifi else "wifi_off"
+        wifi_key = "on" if wifi else "off"
         if prev.get("wifi") != wifi_key:
-            draw_bitmap(WIFI_ON if wifi else WIFI_OFF, page=0, col=wifi_col)
+            draw_bitmap(ICON_CHECK if wifi else ICON_X, page=0, col=status_col)
+            draw_bitmap(WIFI_ON, page=0, col=status_col + 10)
             prev["wifi"] = wifi_key
 
         # === Page 0 (top): DOCK power left, SOLAR power right ===
         update_field("dock", fmt_power_abs(readings["DOCK"][2]), 0, 0, FIELD_W)
-        update_field("sol", fmt_power_abs(readings["SOL"][2]), 0, WIDTH - FIELD_W, FIELD_W)
+        update_field("sol", fmt_power_abs(readings["SOL"][2]), 0, WIDTH - FIELD_W, FIELD_W, align="right")
 
         # === Page 2-3 (middle): LBATT left, RBATT right (signed) ===
         lbat_v, _, lbat_p = readings["LBAT"]
@@ -268,16 +285,16 @@ try:
         update_field("lbat_s", f"{estimate_soc(lbat_v):.0f}%", 3, 0, SOC_W)
 
         rbat_v, _, rbat_p = readings["RBAT"]
-        update_field("rbat_p", fmt_power_signed(rbat_p), 2, WIDTH - FIELD_W, FIELD_W)
-        update_field("rbat_s", f"{estimate_soc(rbat_v):.0f}%", 3, WIDTH - SOC_W, SOC_W)
+        update_field("rbat_p", fmt_power_signed(rbat_p), 2, WIDTH - FIELD_W, FIELD_W, align="right")
+        update_field("rbat_s", f"{estimate_soc(rbat_v):.0f}%", 3, WIDTH - SOC_W, SOC_W, align="right")
 
         # === Page 6 (bottom): LMOTOR left, CORE center, RMOTOR right ===
-        update_field("lmot", fmt_power_abs(readings["LMOT"][2]), 6, 0, FIELD_W)
+        update_field("lmot", fmt_power_abs(readings["LMOT"][2]), 6, 0, BOT_W)
 
-        core_col = (WIDTH - FIELD_W) // 2
-        update_field("core", fmt_power_abs(readings["CORE"][2]), 6, core_col, FIELD_W)
+        bot_center = (WIDTH - BOT_W) // 2
+        update_field("core", fmt_power_abs(readings["CORE"][2]), 6, bot_center, BOT_W)
 
-        update_field("rmot", fmt_power_abs(readings["RMOT"][2]), 6, WIDTH - FIELD_W, FIELD_W)
+        update_field("rmot", fmt_power_abs(readings["RMOT"][2]), 6, WIDTH - BOT_W, BOT_W, align="right")
 
         time.sleep(1)
 
