@@ -1,13 +1,13 @@
 use crate::bus::I2cBus;
 use crate::config::{BNO055_ADDR, IMU_INTERVAL};
 use crate::drivers::bno055::Bno055;
-use crate::types::EulerAngles;
+use crate::types::ImuData;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 pub async fn run(
     bus: I2cBus,
-    tx: watch::Sender<Option<EulerAngles>>,
+    tx: watch::Sender<Option<ImuData>>,
     cancel: CancellationToken,
 ) {
     let imu = Bno055::new(bus, BNO055_ADDR);
@@ -35,9 +35,9 @@ pub async fn run(
             _ = tokio::time::sleep(IMU_INTERVAL) => {}
         }
 
-        match imu.read_euler().await {
-            Ok(angles) => {
-                let _ = tx.send(Some(angles));
+        match imu.read_imu().await {
+            Ok(data) => {
+                let _ = tx.send(Some(data));
             }
             Err(e) => {
                 tracing::warn!("BNO055 read error: {e}");

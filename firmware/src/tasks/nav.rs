@@ -33,7 +33,7 @@ fn angle_diff(from: f64, to: f64) -> f64 {
 
 pub async fn run(
     gps_rx: watch::Receiver<GpsPosition>,
-    imu_rx: watch::Receiver<Option<EulerAngles>>,
+    imu_rx: watch::Receiver<Option<ImuData>>,
     mission_rx: watch::Receiver<Mission>,
     nav_tx: watch::Sender<NavState>,
     motor_tx: watch::Sender<MotorCommand>,

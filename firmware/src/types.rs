@@ -8,6 +8,18 @@ pub struct EulerAngles {
     pub pitch: f64,
 }
 
+/// Full IMU reading with both Euler angles (for nav) and quaternion (for 3D viz).
+#[derive(Clone, Debug, Serialize)]
+pub struct ImuData {
+    pub heading: f64,
+    pub roll: f64,
+    pub pitch: f64,
+    pub qw: f64,
+    pub qx: f64,
+    pub qy: f64,
+    pub qz: f64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Ina228Reading {
     pub label: String,

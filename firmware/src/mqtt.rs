@@ -37,7 +37,7 @@ impl MqttConfig {
 
 pub async fn run(
     config: MqttConfig,
-    imu_rx: watch::Receiver<Option<EulerAngles>>,
+    imu_rx: watch::Receiver<Option<ImuData>>,
     power_rx: watch::Receiver<PowerState>,
     thermal_rx: watch::Receiver<ThermalState>,
     gps_rx: watch::Receiver<GpsPosition>,

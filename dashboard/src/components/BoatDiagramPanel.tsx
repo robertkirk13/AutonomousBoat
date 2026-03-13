@@ -195,7 +195,7 @@ export default function BoatDiagramPanel() {
             {boat.boatOnline ? 'Live' : 'Offline'}
           </div>
         </div>
-        <Boat3DView heading={boat.heading} roll={boat.roll} pitch={boat.pitch} />
+        <Boat3DView quaternion={boat.quaternion} />
         <div className="flex justify-between mt-1.5 text-[10px] text-white/40 font-mono">
           <span>H: {boat.heading.toFixed(0)}&deg;</span>
           <span>R: {boat.roll.toFixed(1)}&deg;</span>

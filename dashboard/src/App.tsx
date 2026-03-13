@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from 'react';
 import { NavigationProvider, useNavigation } from './context/NavigationContext';
 import { Sidebar, TelemetryPanel, TeleopOverlay } from './components';
+import Boat3DView from './components/Boat3DView';
 import './App.css';
 
 const MapView = lazy(() => import('./components/MapView'));
@@ -10,7 +11,7 @@ type ViewMode = '2d' | '3d';
 
 function AppInner() {
   const [viewMode, setViewMode] = useState<ViewMode>('2d');
-  const { controlMode, setControlMode } = useNavigation();
+  const { controlMode, setControlMode, boat } = useNavigation();
 
   return (
     <div className="h-screen w-screen relative overflow-hidden" style={{ background: 'var(--background)' }}>
@@ -89,6 +90,16 @@ function AppInner() {
 
       {/* Teleop controls */}
       {controlMode === 'teleop' && <TeleopOverlay />}
+
+      {/* Floating 3D boat view */}
+      <div className="absolute bottom-2.5 z-[1000] w-[36rem] h-[30rem]" style={{ right: '16.5rem' }}>
+        <Boat3DView quaternion={boat.quaternion} />
+        <div className="flex justify-between px-2 mt-1 text-[9px] font-mono text-white/40">
+          <span>H {boat.heading.toFixed(0)}&deg;</span>
+          <span>R {boat.roll.toFixed(1)}&deg;</span>
+          <span>P {boat.pitch.toFixed(1)}&deg;</span>
+        </div>
+      </div>
 
       {/* Right telemetry panel */}
       <aside className="absolute top-2.5 right-2.5 bottom-2.5 w-60 z-[1000]">

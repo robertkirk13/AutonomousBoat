@@ -9,6 +9,7 @@ const DEFAULT_BOAT_STATE: BoatState = {
   heading: 0,
   roll: 0,
   pitch: 0,
+  quaternion: { w: 1, x: 0, y: 0, z: 0 },
   speed: 0,
   power: null,
   thermal: null,
@@ -28,6 +29,60 @@ function lerpAngle(a: number, b: number, t: number): number {
   if (diff > 180) diff -= 360;
   if (diff < -180) diff += 360;
   return ((a + diff * t) % 360 + 360) % 360;
+}
+
+type Quat = { w: number; x: number; y: number; z: number };
+
+/** Convert BNO055 euler angles (degrees) to quaternion. Fallback when firmware doesn't send qw/qx/qy/qz. */
+function eulerToQuat(heading: number, roll: number, pitch: number): Quat {
+  const h = (heading * Math.PI) / 360; // half-angle
+  const r = (roll * Math.PI) / 360;
+  const p = (pitch * Math.PI) / 360;
+  const sh = Math.sin(h), ch = Math.cos(h);
+  const sr = Math.sin(r), cr = Math.cos(r);
+  const sp = Math.sin(p), cp = Math.cos(p);
+  return {
+    w: ch * cr * cp + sh * sr * sp,
+    x: ch * cr * sp - sh * sr * cp,
+    y: ch * sr * cp + sh * cr * sp,
+    z: sh * cr * cp - ch * sr * sp,
+  };
+}
+
+/** Extract quaternion from ImuData, falling back to euler conversion if qw is missing. */
+function imuToQuat(d: ImuData): Quat {
+  if (d.qw != null && Number.isFinite(d.qw)) return { w: d.qw, x: d.qx, y: d.qy, z: d.qz };
+  return eulerToQuat(d.heading, d.roll, d.pitch);
+}
+
+/** Spherical linear interpolation for quaternions. */
+function slerpQuat(a: Quat, b: Quat, t: number): Quat {
+  // Ensure shortest path
+  let dot = a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z;
+  let bw = b.w, bx = b.x, by = b.y, bz = b.z;
+  if (dot < 0) {
+    dot = -dot;
+    bw = -bw; bx = -bx; by = -by; bz = -bz;
+  }
+  if (dot > 0.9995) {
+    // Close enough — linear interpolation + normalize
+    const w = a.w + (bw - a.w) * t;
+    const x = a.x + (bx - a.x) * t;
+    const y = a.y + (by - a.y) * t;
+    const z = a.z + (bz - a.z) * t;
+    const len = Math.sqrt(w * w + x * x + y * y + z * z);
+    return { w: w / len, x: x / len, y: y / len, z: z / len };
+  }
+  const theta = Math.acos(dot);
+  const sinTheta = Math.sin(theta);
+  const sa = Math.sin((1 - t) * theta) / sinTheta;
+  const sb = Math.sin(t * theta) / sinTheta;
+  return {
+    w: a.w * sa + bw * sb,
+    x: a.x * sa + bx * sb,
+    y: a.y * sa + by * sb,
+    z: a.z * sa + bz * sb,
+  };
 }
 
 function lerpPower(a: PowerData, b: PowerData, t: number): PowerData {
@@ -198,17 +253,20 @@ export function useBoatMqtt() {
       const nav = navChannel.current.sample();
       const uptime = uptimeChannel.current.sample();
 
-      // Interpolate IMU
+      // Interpolate IMU (euler for display, quaternion for 3D — no gimbal lock)
       let heading = 0, roll = 0, pitch = 0;
+      let quaternion = DEFAULT_BOAT_STATE.quaternion;
       if (imu) {
         if ('t' in imu) {
           heading = lerpAngle(imu.prev.heading, imu.curr.heading, imu.t);
           roll = lerp(imu.prev.roll, imu.curr.roll, imu.t);
           pitch = lerp(imu.prev.pitch, imu.curr.pitch, imu.t);
+          quaternion = slerpQuat(imuToQuat(imu.prev), imuToQuat(imu.curr), imu.t);
         } else {
           heading = imu.latest.heading;
           roll = imu.latest.roll;
           pitch = imu.latest.pitch;
+          quaternion = imuToQuat(imu.latest);
         }
       }
 
@@ -275,6 +333,7 @@ export function useBoatMqtt() {
         heading,
         roll,
         pitch,
+        quaternion,
         speed,
         power: powerVal,
         thermal: thermalVal,

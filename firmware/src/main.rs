@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // --- Watch channels for sensor state ---
-    let (imu_tx, imu_rx) = watch::channel(None::<EulerAngles>);
+    let (imu_tx, imu_rx) = watch::channel(None::<ImuData>);
     let (power_tx, power_rx) = watch::channel(PowerState::default());
     let (thermal_tx, thermal_rx) = watch::channel(ThermalState::default());
     let (gps_tx, gps_rx) = watch::channel(GpsPosition::default());

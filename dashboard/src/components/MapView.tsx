@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useNavigation } from '../context/NavigationContext';
 
 type LeafletModule = typeof import('leaflet');
@@ -60,8 +60,8 @@ interface MapContentProps {
 }
 
 function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
-  const { MapContainer, TileLayer, Marker, Polyline, Polygon, useMapEvents, useMap } = RL;
-  const { mapCenter, waypointMode, areaCoverage, addPolygonVertex, controlMode } = useNavigation();
+  const { MapContainer, TileLayer, Marker, Polyline, Polygon, useMapEvents } = RL;
+  const { mapCenter, setMapCenter, waypointMode, areaCoverage, addPolygonVertex, controlMode } = useNavigation();
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [mapMode, setMapMode] = useState<'map' | 'satellite'>('map');
 
@@ -100,13 +100,13 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
     return null;
   }, [mission.status, waypointMode, controlMode, addWaypoint, addPolygonVertex]);
 
-  const MapCenterUpdater = useCallback(() => {
-    const map = useMap();
-    useEffect(() => {
-      map.setView([mapCenter.lat, mapCenter.lng], map.getZoom());
-    }, [mapCenter.lat, mapCenter.lng, map]);
-    return null;
-  }, [mapCenter.lat, mapCenter.lng]);
+  const mapRef = useRef<L.Map | null>(null);
+
+  useEffect(() => {
+    if (mapRef.current) {
+      mapRef.current.setView([mapCenter.lat, mapCenter.lng], mapRef.current.getZoom());
+    }
+  }, [mapCenter]);
 
   const userLocationIcon = useMemo(() => {
     return L.divIcon({
@@ -189,6 +189,7 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
         zoom={15}
         className="w-full h-full"
         style={{ background: '#1a1a2e' }}
+        ref={mapRef}
       >
         {mapMode === 'map' ? (
           <TileLayer
@@ -205,7 +206,6 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
         )}
 
         <MapClickHandler />
-        <MapCenterUpdater />
 
         {fullPath.length > 1 && (
           <Polyline
@@ -255,20 +255,22 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
         )}
       </MapContainer>
 
-      {controlMode === 'autonomous' && (mission.status === 'idle' || mission.status === 'planning') && (
-        <div className="absolute top-3 left-[20.5rem] z-[500] bg-panel/70 backdrop-blur-xl rounded-lg px-3 py-2 border border-panel-border/50">
-          <span className="text-white/40 text-xs">
-            {waypointMode === 'manual'
-              ? 'Click map to add waypoints'
-              : areaCoverage.polygon.length < 3
-                ? `Click to add vertices (${areaCoverage.polygon.length}/3 min)`
-                : 'Add more vertices or generate from sidebar'
-            }
-          </span>
-        </div>
-      )}
-
-      <div className="absolute top-3 right-[16.5rem] z-[500]">
+      <div className="absolute top-3 right-[16.5rem] z-[500] flex gap-2">
+        <button
+          type="button"
+          onClick={() => setMapCenter(boat.position.lat, boat.position.lng)}
+          className="bg-panel/70 backdrop-blur-xl rounded-lg px-3 py-1.5 border border-panel-border/50 hover:bg-panel/90 transition-colors text-xs text-white/50 hover:text-white/70"
+          title="Center on boat"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="Center on boat">
+            <title>Center on boat</title>
+            <circle cx="12" cy="12" r="3" />
+            <line x1="12" y1="2" x2="12" y2="6" />
+            <line x1="12" y1="18" x2="12" y2="22" />
+            <line x1="2" y1="12" x2="6" y2="12" />
+            <line x1="18" y1="12" x2="22" y2="12" />
+          </svg>
+        </button>
         <button
           onClick={() => setMapMode(mapMode === 'map' ? 'satellite' : 'map')}
           className="bg-panel/70 backdrop-blur-xl rounded-lg px-3 py-1.5 border border-panel-border/50 hover:bg-panel/90 transition-colors text-xs text-white/50 hover:text-white/70"

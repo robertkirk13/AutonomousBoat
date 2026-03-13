@@ -16,7 +16,7 @@ interface NavigationContextType {
   stopMission: () => void;
   clearWaypoints: () => void;
   setMapCenter: (lat: number, lng: number) => void;
-  mapCenter: { lat: number; lng: number };
+  mapCenter: { lat: number; lng: number; _v: number };
   updateDataCollection: (updates: Partial<DataCollectionConfig>) => void;
   toggleDataCollectionMeasurement: (measurementType: MeasurementType) => void;
   setBoatPosition: (lat: number, lng: number) => void;
@@ -46,7 +46,7 @@ export function useNavigation() {
 const DEFAULT_LAKE_CENTER = { lat: 47.6062, lng: -122.3321 };
 
 export function NavigationProvider({ children }: { children: React.ReactNode }) {
-  const [mapCenter, setMapCenterState] = useState(DEFAULT_LAKE_CENTER);
+  const [mapCenter, setMapCenterState] = useState({ ...DEFAULT_LAKE_CENTER, _v: 0 });
   const waypointCountRef = useRef(0);
 
   // All boat state comes from MQTT
@@ -214,7 +214,7 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
   }, [publish]);
 
   const setMapCenter = useCallback((lat: number, lng: number) => {
-    setMapCenterState({ lat, lng });
+    setMapCenterState((prev) => ({ lat, lng, _v: prev._v + 1 }));
   }, []);
 
   const setBoatPosition = useCallback((_lat: number, _lng: number) => {

@@ -156,6 +156,33 @@ fn encode_euler(heading: f64, roll: f64, pitch: f64) -> [u8; 6] {
     ]
 }
 
+/// Encode BNO055 quaternion (8 bytes LE, scale = 2^14).
+fn encode_quaternion(heading_deg: f64, roll_deg: f64, pitch_deg: f64) -> [u8; 8] {
+    // Convert euler (ZYX convention matching BNO055) to quaternion
+    let h = heading_deg.to_radians() / 2.0;
+    let r = roll_deg.to_radians() / 2.0;
+    let p = pitch_deg.to_radians() / 2.0;
+    let (sh, ch) = h.sin_cos();
+    let (sr, cr) = r.sin_cos();
+    let (sp, cp) = p.sin_cos();
+    let qw = ch * cr * cp + sh * sr * sp;
+    let qx = ch * cr * sp - sh * sr * cp;
+    let qy = ch * sr * cp + sh * cr * sp;
+    let qz = sh * cr * cp - ch * sr * sp;
+
+    let scale = 16384.0_f64; // 2^14
+    let w = (qw * scale) as i16;
+    let x = (qx * scale) as i16;
+    let y = (qy * scale) as i16;
+    let z = (qz * scale) as i16;
+    [
+        (w & 0xFF) as u8, ((w >> 8) & 0xFF) as u8,
+        (x & 0xFF) as u8, ((x >> 8) & 0xFF) as u8,
+        (y & 0xFF) as u8, ((y >> 8) & 0xFF) as u8,
+        (z & 0xFF) as u8, ((z >> 8) & 0xFF) as u8,
+    ]
+}
+
 /// Runs the simulated I2C bus owner. Replaces `bus::run_bus_owner` in sim mode.
 pub fn run_bus_owner_sim(rx: &mut mpsc::Receiver<I2cRequest>, world: &SimWorld) {
     let state = SimState::new(world.clone());
@@ -216,6 +243,10 @@ pub fn run_bus_owner_sim(rx: &mut mpsc::Receiver<I2cRequest>, world: &SimWorld) 
                     // BNO055 euler angles (6 bytes from 0x1A)
                     (0x28, 0x1A) => {
                         encode_euler(state.heading(), state.roll(), state.pitch()).to_vec()
+                    }
+                    // BNO055 quaternion (8 bytes from 0x20)
+                    (0x28, 0x20) => {
+                        encode_quaternion(state.heading(), state.roll(), state.pitch()).to_vec()
                     }
                     // Default: zeros
                     _ => vec![0u8; len],

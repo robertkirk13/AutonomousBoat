@@ -1,5 +1,5 @@
 import { useNavigation } from '../context/NavigationContext';
-import Boat3DView from './Boat3DView';
+import { PowerPanel } from './PowerPanel';
 
 function Datum({ label, value, unit, mono = true }: {
   label: string;
@@ -42,17 +42,8 @@ export default function TelemetryPanel() {
   const findChannel = (label: string) =>
     boat.power?.channels.find((ch) => ch.label === label);
 
-  const leftBat = findChannel('left_battery');
-  const rightBat = findChannel('right_battery');
   const leftMotor = findChannel('left_motor');
   const rightMotor = findChannel('right_motor');
-  const solar = findChannel('solar');
-
-  const avgV = leftBat && rightBat
-    ? ((leftBat.voltage_v + rightBat.voltage_v) / 2).toFixed(1)
-    : (leftBat?.voltage_v ?? rightBat?.voltage_v ?? 0).toFixed(1);
-
-  const totalPower = (boat.power?.channels.reduce((s, c) => s + c.power_w, 0) ?? 0).toFixed(0);
 
   const leftThrust = boat.nav?.left_thrust ?? 0;
   const rightThrust = boat.nav?.right_thrust ?? 0;
@@ -73,18 +64,6 @@ export default function TelemetryPanel() {
           </span>
         )}
       </div>
-
-      {/* 3D boat — compact */}
-      <div className="px-2.5 pb-1">
-        <Boat3DView heading={boat.heading} roll={boat.roll} pitch={boat.pitch} />
-        <div className="flex justify-between px-1 mt-1 text-[9px] font-mono text-white/30">
-          <span>H {boat.heading.toFixed(0)}&deg;</span>
-          <span>R {boat.roll.toFixed(1)}&deg;</span>
-          <span>P {boat.pitch.toFixed(1)}&deg;</span>
-        </div>
-      </div>
-
-      <div className="h-px bg-white/[0.04] mx-3" />
 
       {/* Navigation */}
       <Section title="Navigation">
@@ -109,13 +88,7 @@ export default function TelemetryPanel() {
       <div className="h-px bg-white/[0.04] mx-3" />
 
       {/* Power */}
-      <Section title="Power">
-        <Datum label="Battery" value={avgV} unit="V" />
-        <Datum label="Total" value={totalPower} unit="W" />
-        {solar && solar.power_w > 0.5 && (
-          <Datum label="Solar" value={`+${solar.power_w.toFixed(1)}`} unit="W" />
-        )}
-      </Section>
+      <PowerPanel data={boat.power} />
 
       {/* Thermal */}
       {boat.thermal && boat.thermal.temps.length > 0 && (

@@ -38,6 +38,10 @@ export interface ImuData {
   heading: number;
   roll: number;
   pitch: number;
+  qw: number;
+  qx: number;
+  qy: number;
+  qz: number;
 }
 
 export interface GpsData {
@@ -90,6 +94,7 @@ export interface BoatState {
   heading: number;
   roll: number;
   pitch: number;
+  quaternion: { w: number; x: number; y: number; z: number };
   speed: number;
   power: PowerData | null;
   thermal: ThermalData | null;
