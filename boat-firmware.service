@@ -1,0 +1,17 @@
+[Unit]
+Description=BoatCore Firmware
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/chuck/boat-firmware
+WorkingDirectory=/home/chuck
+EnvironmentFile=/home/chuck/.env
+Restart=on-failure
+RestartSec=5
+User=root
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

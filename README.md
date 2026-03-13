@@ -192,7 +192,32 @@ Copy the binary to the Pi:
 scp target/aarch64-unknown-linux-gnu/release/boat-firmware chuck@castaway.local:~/
 ```
 
-### 11. Build dashboard
+### 11. Install firmware service
+
+Copy the MQTT credentials to the Pi:
+
+```bash
+scp firmware/.env chuck@castaway.local:~/.env
+```
+
+Install and enable the systemd service:
+
+```bash
+sudo cp boat-firmware.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable boat-firmware
+sudo systemctl start boat-firmware
+```
+
+Check status:
+```bash
+sudo systemctl status boat-firmware
+journalctl -u boat-firmware -f
+```
+
+The firmware will auto-restart on failure. It reads MQTT credentials from `~/.env` (via the `EnvironmentFile` directive) and also checks for a `.env` file next to the binary.
+
+### 12. Build dashboard
 
 Requires [bun](https://bun.sh/) (not npm):
 
@@ -202,7 +227,7 @@ bun install
 bun run build
 ```
 
-### 12. MQTT configuration
+### 13. MQTT configuration
 
 The firmware reads MQTT credentials from `firmware/.env`:
 

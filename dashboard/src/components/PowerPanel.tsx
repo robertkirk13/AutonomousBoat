@@ -45,15 +45,15 @@ export function PowerPanel({ data }: { data: PowerState | null }) {
                   {LABEL_DISPLAY[ch.label] || ch.label}
                 </div>
                 <div className={`text-lg font-semibold ${voltageColor(ch.voltage_v)}`}>
-                  {ch.voltage_v.toFixed(2)}
+                  {ch.voltage_v.toFixed(1)}
                   <span className="text-white/40 text-xs font-normal ml-0.5">V</span>
                 </div>
                 <div className="text-xs text-white/50 mt-1 font-mono">
-                  {ch.current_a.toFixed(3)}A &middot; {ch.power_w.toFixed(2)}W
+                  {ch.current_a.toFixed(1)}A &middot; {ch.power_w.toFixed(1)}W
                 </div>
                 {(ch.label.includes("battery") || ch.label === "solar") && (
                   <div className="text-[10px] text-white/30 mt-0.5 font-mono">
-                    {ch.energy_wh.toFixed(3)}Wh &middot; {ch.charge_ah.toFixed(3)}Ah
+                    {ch.energy_wh.toFixed(1)}Wh &middot; {ch.charge_ah.toFixed(1)}Ah
                   </div>
                 )}
               </div>
