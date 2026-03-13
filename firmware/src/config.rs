@@ -69,3 +69,10 @@ pub const CAN_TX_ID: u16 = 0x100;
 
 // MQTT CAN topic
 pub const TOPIC_CAN: &str = "boat/can";
+
+// EG25-G GPS (Quectel module over USB serial)
+// NMEA port for reading position sentences
+pub const GPS_NMEA_DEV: &str = "/dev/ttyUSB1";
+// AT command port for enabling GPS
+pub const GPS_AT_DEV: &str = "/dev/ttyUSB2";
+pub const GPS_BAUD: u32 = 115200;

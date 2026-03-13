@@ -1,7 +1,7 @@
 import smbus2
 import time
 import signal
-from ssd1306 import SSD1306, WIDTH
+from ssd1306 import Display, WIDTH, HEIGHT, FONT
 
 I2C_BUS = 1
 
@@ -20,7 +20,7 @@ MAX_CURRENT = 35.0
 CURRENT_LSB = MAX_CURRENT / (2**19)
 
 bus = smbus2.SMBus(I2C_BUS)
-display = SSD1306(bus)
+display = Display()
 
 # ── INA228 functions ──
 
@@ -69,11 +69,6 @@ for addr in [INA_DOCK, INA_LBATT, INA_LMOTOR, INA_CORE, INA_SOLAR, INA_RBATT, IN
     except OSError:
         pass
 
-# ── Layout constants ──
-FIELD_W = 42
-SOC_W = 30
-BOT_W = 36
-
 # ── Signal handling ──
 
 running = True
@@ -89,14 +84,47 @@ signal.signal(signal.SIGINT, handle_signal)
 # ── Main loop ──
 
 print("Initializing display...", flush=True)
-display.init()
-print("Clearing display...", flush=True)
-display.clear()
 
-# Draw static elements once
-wilson_w = SSD1306.text_width("WILSON")
-wil_col = (WIDTH - wilson_w) // 2
-display.draw_text("WILSON", page=3, col=wil_col)
+def render(draw, readings):
+    # Title centered
+    title = "WILSON"
+    tw = draw.textlength(title, font=FONT)
+    draw.text(((WIDTH - tw) / 2, 24), title, fill="white", font=FONT)
+
+    # Row 0: DOCK left, SOLAR right
+    dock_txt = fmt_power_abs(readings["DOCK"][2])
+    sol_txt = fmt_power_abs(readings["SOL"][2])
+    draw.text((0, 0), dock_txt, fill="white", font=FONT)
+    sw = draw.textlength(sol_txt, font=FONT)
+    draw.text((WIDTH - sw, 0), sol_txt, fill="white", font=FONT)
+
+    # Row 2: LBATT / RBATT power (signed)
+    lbat_v, _, lbat_p = readings["LBAT"]
+    rbat_v, _, rbat_p = readings["RBAT"]
+
+    lbat_txt = fmt_power_signed(lbat_p)
+    rbat_txt = fmt_power_signed(rbat_p)
+    draw.text((0, 16), lbat_txt, fill="white", font=FONT)
+    rw = draw.textlength(rbat_txt, font=FONT)
+    draw.text((WIDTH - rw, 16), rbat_txt, fill="white", font=FONT)
+
+    # Row 3: SOC percentages
+    lsoc = f"{estimate_soc(lbat_v):.0f}%"
+    rsoc = f"{estimate_soc(rbat_v):.0f}%"
+    draw.text((0, 28), lsoc, fill="white", font=FONT)
+    rsw = draw.textlength(rsoc, font=FONT)
+    draw.text((WIDTH - rsw, 28), rsoc, fill="white", font=FONT)
+
+    # Bottom row: LMOTOR, CORE, RMOTOR
+    lmot_txt = fmt_power_abs(readings["LMOT"][2])
+    core_txt = fmt_power_abs(readings["CORE"][2])
+    rmot_txt = fmt_power_abs(readings["RMOT"][2])
+
+    draw.text((0, 54), lmot_txt, fill="white", font=FONT)
+    cw = draw.textlength(core_txt, font=FONT)
+    draw.text(((WIDTH - cw) / 2, 54), core_txt, fill="white", font=FONT)
+    mw = draw.textlength(rmot_txt, font=FONT)
+    draw.text((WIDTH - mw, 54), rmot_txt, fill="white", font=FONT)
 
 print("Entering main loop...", flush=True)
 
@@ -113,24 +141,7 @@ while running:
             except OSError:
                 readings[name] = (0, 0, 0)
 
-        # Page 0: DOCK left, SOLAR right
-        display.update_field("dock", fmt_power_abs(readings["DOCK"][2]), 0, 0, FIELD_W)
-        display.update_field("sol", fmt_power_abs(readings["SOL"][2]), 0, WIDTH - FIELD_W, FIELD_W, align="right")
-
-        # Page 2-3: LBATT left, RBATT right (signed)
-        lbat_v, _, lbat_p = readings["LBAT"]
-        display.update_field("lbat_p", fmt_power_signed(lbat_p), 2, 0, FIELD_W)
-        display.update_field("lbat_s", f"{estimate_soc(lbat_v):.0f}%", 3, 0, SOC_W)
-
-        rbat_v, _, rbat_p = readings["RBAT"]
-        display.update_field("rbat_p", fmt_power_signed(rbat_p), 2, WIDTH - FIELD_W, FIELD_W, align="right")
-        display.update_field("rbat_s", f"{estimate_soc(rbat_v):.0f}%", 3, WIDTH - SOC_W, SOC_W, align="right")
-
-        # Page 6: LMOTOR left, CORE center, RMOTOR right
-        display.update_field("lmot", fmt_power_abs(readings["LMOT"][2]), 6, 0, BOT_W)
-        bot_center = (WIDTH - BOT_W) // 2
-        display.update_field("core", fmt_power_abs(readings["CORE"][2]), 6, bot_center, BOT_W)
-        display.update_field("rmot", fmt_power_abs(readings["RMOT"][2]), 6, WIDTH - BOT_W, BOT_W, align="right")
+        display.draw(lambda draw: render(draw, readings))
 
     except OSError as e:
         print(f"Display I2C error: {e}", flush=True)

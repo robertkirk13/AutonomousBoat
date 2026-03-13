@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = ["hw"]
 sim = []
-hw = ["dep:rppal", "dep:libc", "dep:spidev"]
+hw = ["dep:rppal", "dep:libc", "dep:spidev", "dep:serialport"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
@@ -24,6 +24,7 @@ rustls-native-certs = "0.7"
 rppal = { version = "0.19", features = ["hal"], optional = true }
 libc = { version = "0.2", optional = true }
 spidev = { version = "0.6", optional = true }
+serialport = { version = "4.5", optional = true, default-features = false }
 
 [profile.release]
 opt-level = "s"

@@ -115,6 +115,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cancel.clone(),
     ));
 
+    // --- GPS (EG25-G via USB serial, hw only) ---
+    #[cfg(feature = "hw")]
+    let gps_handle = tokio::spawn(tasks::gps::run(gps_tx, cancel.clone()));
+
     // --- Navigation autopilot ---
     let nav_handle = tokio::spawn(tasks::nav::run(
         gps_rx.clone(),
@@ -198,6 +202,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = thermal_handle.await;
         let _ = display_handle.await;
         let _ = can_handle.await;
+        #[cfg(feature = "hw")]
+        let _ = gps_handle.await;
         let _ = nav_handle.await;
         #[cfg(feature = "sim")]
         let _ = sim_gps_handle.await;
