@@ -23,6 +23,8 @@ interface NavigationContextType {
   controlMode: ControlMode;
   setControlMode: (mode: ControlMode) => void;
   sendTeleop: (left: number, right: number) => void;
+  calibrateUpright: () => void;
+  calibrateCompass: () => void;
   waypointMode: WaypointMode;
   setWaypointMode: (mode: WaypointMode) => void;
   areaCoverage: AreaCoverageConfig;
@@ -50,7 +52,7 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
   const waypointCountRef = useRef(0);
 
   // All boat state comes from MQTT
-  const { boat, publish } = useBoatMqtt();
+  const { boat, publish, calibrateUpright, calibrateCompass } = useBoatMqtt();
 
   const [mission, setMission] = useState<MissionState>({
     status: 'idle',
@@ -412,6 +414,8 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
         controlMode,
         setControlMode,
         sendTeleop,
+        calibrateUpright,
+        calibrateCompass,
         waypointMode,
         setWaypointMode,
         areaCoverage,

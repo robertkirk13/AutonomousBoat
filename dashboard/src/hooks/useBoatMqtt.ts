@@ -85,6 +85,21 @@ function slerpQuat(a: Quat, b: Quat, t: number): Quat {
   };
 }
 
+/** Multiply two quaternions: a * b. */
+function mulQuat(a: Quat, b: Quat): Quat {
+  return {
+    w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+    y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+    z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+  };
+}
+
+/** Conjugate (inverse for unit quaternions). */
+function invQuat(q: Quat): Quat {
+  return { w: q.w, x: -q.x, y: -q.y, z: -q.z };
+}
+
 function lerpPower(a: PowerData, b: PowerData, t: number): PowerData {
   return {
     channels: b.channels.map((ch, i) => {
@@ -158,6 +173,27 @@ export function useBoatMqtt() {
 
   // Connection state doesn't need interpolation — store in refs updated immediately
   const connState = useRef({ mqttConnected: false, boatOnline: false });
+
+  // Upright calibration: stores inverse of the reference quaternion
+  const uprightRef = useRef<Quat | null>(null);
+  // Compass calibration: heading offset in degrees
+  const compassOffsetRef = useRef<number>(0);
+
+  const calibrateUpright = useCallback(() => {
+    // Snapshot the current raw quaternion; its inverse will zero-out the current tilt
+    const imu = imuChannel.current.sample();
+    if (!imu) return;
+    const raw = 't' in imu ? imuToQuat(imu.curr) : imuToQuat(imu.latest);
+    uprightRef.current = invQuat(raw);
+  }, []);
+
+  const calibrateCompass = useCallback(() => {
+    // Store current heading so it becomes the new "North" (0°)
+    const imu = imuChannel.current.sample();
+    if (!imu) return;
+    const raw = 't' in imu ? imu.curr : imu.latest;
+    compassOffsetRef.current = raw.heading;
+  }, []);
 
   const publish = useCallback((topic: string, payload: unknown) => {
     const client = clientRef.current;
@@ -270,6 +306,16 @@ export function useBoatMqtt() {
         }
       }
 
+      // Apply compass calibration offset to heading
+      if (compassOffsetRef.current !== 0) {
+        heading = ((heading - compassOffsetRef.current) % 360 + 360) % 360;
+      }
+
+      // Apply upright calibration offset
+      if (uprightRef.current) {
+        quaternion = mulQuat(uprightRef.current, quaternion);
+      }
+
       // Interpolate GPS
       let position = DEFAULT_BOAT_STATE.position;
       let speed = 0;
@@ -350,5 +396,5 @@ export function useBoatMqtt() {
     return () => cancelAnimationFrame(rafId);
   }, []);
 
-  return { boat, publish };
+  return { boat, publish, calibrateUpright, calibrateCompass };
 }

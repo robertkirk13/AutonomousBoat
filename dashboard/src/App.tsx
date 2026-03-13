@@ -28,7 +28,7 @@ function AppInner() {
 
       {/* Left sidebar — only in autonomous mode */}
       {controlMode === 'autonomous' && (
-        <aside className="absolute top-2.5 left-2.5 bottom-2.5 w-[19rem] z-[1000]">
+        <aside className="absolute top-2.5 left-2.5 bottom-2.5 w-60 z-[1000]">
           <div className="h-full bg-panel/80 backdrop-blur-xl rounded-xl border border-panel-border/60 shadow-2xl shadow-black/40 overflow-hidden">
             <Sidebar />
           </div>
@@ -36,7 +36,7 @@ function AppInner() {
       )}
 
       {/* Top-left controls */}
-      <div className="absolute top-2.5 z-[1000]" style={{ left: controlMode === 'autonomous' ? '20.5rem' : '0.625rem' }}>
+      <div className="absolute top-2.5 z-[1000]" style={{ left: controlMode === 'autonomous' ? '16.25rem' : '0.625rem' }}>
         <div className="flex gap-1.5">
           {/* Mode selector */}
           <div className="flex bg-panel/80 backdrop-blur-xl rounded-lg border border-panel-border/60 overflow-hidden">
@@ -91,8 +91,8 @@ function AppInner() {
       {/* Teleop controls */}
       {controlMode === 'teleop' && <TeleopOverlay />}
 
-      {/* Floating 3D boat view */}
-      <div className="absolute bottom-2.5 z-[1000] w-[36rem] h-[30rem]" style={{ right: '16.5rem' }}>
+      {/* Floating 3D boat view — transparent to clicks */}
+      <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-[999] w-[36rem] h-[30rem] pointer-events-none">
         <Boat3DView quaternion={boat.quaternion} />
         <div className="flex justify-between px-2 mt-1 text-[9px] font-mono text-white/40">
           <span>H {boat.heading.toFixed(0)}&deg;</span>
