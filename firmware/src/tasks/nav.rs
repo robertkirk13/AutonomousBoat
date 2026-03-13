@@ -41,11 +41,13 @@ pub async fn run(
 ) {
     tracing::info!("Navigation task started");
 
+    let mut mission_rx = mission_rx;
+    let mut mission = mission_rx.borrow().clone();
     let mut current_wp: usize = 0;
-    let mut active = false;
     let mut prev_error: f64 = 0.0;
     let mut prev_left: f64 = 0.0;
     let mut prev_right: f64 = 0.0;
+    let mut waiting_for_fix = false;
     let max_slew = 0.1; // max thrust change per tick (0.1 = 10% per 200ms)
 
     loop {
@@ -54,40 +56,48 @@ pub async fn run(
             _ = tokio::time::sleep(NAV_INTERVAL) => {}
         }
 
-        let mission = mission_rx.borrow().clone();
-        let gps = gps_rx.borrow().clone();
+        if matches!(mission_rx.has_changed(), Ok(true)) {
+            mission = mission_rx.borrow_and_update().clone();
+            current_wp = 0;
+            prev_error = 0.0;
+            prev_left = 0.0;
+            prev_right = 0.0;
+            waiting_for_fix = false;
+            let _ = motor_tx.send(MotorCommand::default());
 
-        // Wait for valid sensor data before running control loop
-        let heading = match imu_rx.borrow().as_ref().map(|a| a.heading) {
-            Some(h) => h,
-            None => {
-                tracing::debug!("Nav: waiting for IMU fix");
-                continue;
-            }
-        };
-        if gps.lat == 0.0 && gps.lon == 0.0 {
-            tracing::debug!("Nav: waiting for GPS fix");
-            continue;
-        }
-
-        // Check if mission changed
-        if mission.waypoints.is_empty() {
-            if active {
-                active = false;
-                current_wp = 0;
-                let _ = motor_tx.send(MotorCommand::default());
+            if mission.waypoints.is_empty() {
                 let _ = nav_tx.send(NavState::default());
                 tracing::info!("Mission cleared");
+                continue;
             }
+
+            tracing::info!("Mission updated: {} waypoints", mission.waypoints.len());
+        }
+
+        if mission.waypoints.is_empty() {
             continue;
         }
 
-        // New mission arrived?
-        if !active {
-            active = true;
-            current_wp = 0;
-            tracing::info!("Mission started: {} waypoints", mission.waypoints.len());
+        let gps = gps_rx.borrow().clone();
+        let heading = imu_rx.borrow().as_ref().map(|a| a.heading);
+
+        // Hold the boat stationary whenever a mission exists but sensors are not trustworthy.
+        if heading.is_none() || (gps.lat == 0.0 && gps.lon == 0.0) {
+            prev_error = 0.0;
+            prev_left = 0.0;
+            prev_right = 0.0;
+            let _ = motor_tx.send(MotorCommand::default());
+            if !waiting_for_fix {
+                tracing::warn!("Nav hold: waiting for valid IMU and GPS data");
+                waiting_for_fix = true;
+            }
+            continue;
         }
+        if waiting_for_fix {
+            tracing::info!("Navigation resumed after sensor fix");
+            waiting_for_fix = false;
+        }
+        let heading = heading.unwrap_or(0.0);
 
         // Already completed all waypoints?
         if current_wp >= mission.waypoints.len() {

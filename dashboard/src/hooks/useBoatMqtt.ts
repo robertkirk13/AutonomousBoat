@@ -107,7 +107,8 @@ export function useBoatMqtt() {
   const publish = useCallback((topic: string, payload: unknown) => {
     const client = clientRef.current;
     if (client?.connected) {
-      client.publish(topic, JSON.stringify(payload));
+      const qos = topic === 'boat/motor/set' || topic === 'boat/mission/set' ? 1 : 0;
+      client.publish(topic, JSON.stringify(payload), { qos });
     }
   }, []);
 

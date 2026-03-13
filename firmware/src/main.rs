@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mission_tx, mission_rx) = watch::channel(Mission::default());
     let (motor_tx, motor_rx) = watch::channel(MotorCommand::default());
     let (teleop_tx, teleop_rx) = watch::channel(MotorCommand::default());
-    let (can_state_tx, _can_state_rx) = watch::channel(CanState::default());
+    let (can_state_tx, can_state_rx) = watch::channel(CanState::default());
 
     // CAN TX request channel (other tasks can send CAN frames)
     let (can_tx, can_tx_rx) = mpsc::channel::<tasks::can::CanTxRequest>(32);
@@ -141,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let motor_handle = tokio::spawn(tasks::motor::run(
         motor_rx,
         teleop_rx,
+        can_state_rx,
         can_tx.clone(),
         cancel.clone(),
     ));
@@ -202,10 +203,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Suppress unused warnings for CAN channel handles not yet consumed
-    let _ = _can_state_rx;
     let _ = _can_frame_rx;
     #[cfg(not(feature = "hw"))]
-    drop(can_tx);
+    {
+        let _ = can_state_rx;
+        drop(can_tx);
+    }
 
     // --- Wait for shutdown signal ---
     tokio::signal::ctrl_c().await?;

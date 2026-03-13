@@ -108,7 +108,7 @@ impl Default for NavState {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct MotorCommand {
     pub left: f64,
     pub right: f64,

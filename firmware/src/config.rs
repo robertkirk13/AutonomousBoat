@@ -61,6 +61,11 @@ pub const GPS_INTERVAL: Duration = Duration::from_secs(1);     // 1Hz publish
 pub const WAYPOINT_REACHED_M: f64 = 3.0;                       // meters
 pub const MAX_SPEED_MPS: f64 = 2.0;
 
+// Motor output / command freshness
+pub const MOTOR_OUTPUT_INTERVAL: Duration = Duration::from_millis(50); // 20Hz
+pub const TELEOP_COMMAND_TIMEOUT: Duration = Duration::from_millis(400);
+pub const AUTOPILOT_COMMAND_TIMEOUT: Duration = Duration::from_millis(750);
+
 // MCP2515 CAN controller (SPI bus 0, CE0, 16MHz crystal)
 pub const CAN_SPI_DEV: &str = "/dev/spidev0.0";
 pub const CAN_SPI_SPEED_HZ: u32 = 1_000_000;
