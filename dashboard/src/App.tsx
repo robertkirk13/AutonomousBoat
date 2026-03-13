@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from 'react';
 import { NavigationProvider, useNavigation } from './context/NavigationContext';
 import { Sidebar, TelemetryPanel, TeleopOverlay } from './components';
 import Boat3DView from './components/Boat3DView';
+import CameraView from './components/CameraView';
 import './App.css';
 
 const MapView = lazy(() => import('./components/MapView'));
@@ -91,13 +92,23 @@ function AppInner() {
       {/* Teleop controls */}
       {controlMode === 'teleop' && <TeleopOverlay />}
 
-      {/* Floating 3D boat view — transparent to clicks */}
-      <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-[999] w-[36rem] h-[30rem] pointer-events-none">
-        <Boat3DView quaternion={boat.quaternion} />
-        <div className="flex justify-between px-2 mt-1 text-[9px] font-mono text-white/40">
-          <span>H {boat.heading.toFixed(0)}&deg;</span>
-          <span>R {boat.roll.toFixed(1)}&deg;</span>
-          <span>P {boat.pitch.toFixed(1)}&deg;</span>
+      {/* Floating 3D boat view + camera — transparent to clicks */}
+      <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-[999] flex gap-2 pointer-events-none">
+        {/* Boat model */}
+        <div className="w-[26rem] h-[22rem]">
+          <Boat3DView quaternion={boat.quaternion} />
+          <div className="flex justify-between px-2 mt-1 text-[9px] font-mono text-white/40">
+            <span>H {boat.heading.toFixed(0)}&deg;</span>
+            <span>R {boat.roll.toFixed(1)}&deg;</span>
+            <span>P {boat.pitch.toFixed(1)}&deg;</span>
+          </div>
+        </div>
+        {/* Live camera feed */}
+        <div className="w-[26rem] h-[22rem]">
+          <CameraView />
+          <div className="text-center mt-1 text-[9px] font-mono text-white/40">
+            Camera
+          </div>
         </div>
       </div>
 

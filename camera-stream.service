@@ -1,0 +1,13 @@
+[Unit]
+Description=Pi Camera MJPEG Streamer
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/AutonomousBoat/camera_stream.py --port 8554 --width 640 --height 480 --fps 15
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
