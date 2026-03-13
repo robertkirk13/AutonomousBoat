@@ -13,7 +13,7 @@ FONT = ImageFont.load_default()
 class Display:
     def __init__(self, port=1, address=0x3C):
         serial = i2c(port=port, address=address)
-        self.device = ssd1306(serial, width=WIDTH, height=HEIGHT)
+        self.device = ssd1306(serial, width=WIDTH, height=HEIGHT, rotate=2)
 
     def clear(self):
         with canvas(self.device) as draw:
