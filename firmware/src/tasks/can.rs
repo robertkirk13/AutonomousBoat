@@ -54,30 +54,37 @@ fn run_blocking(
 ) {
     use crate::drivers::mcp2515::Mcp2515;
 
-    let mut can = match Mcp2515::open(CAN_SPI_DEV, CAN_SPI_SPEED_HZ) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("MCP2515 SPI open failed: {e}");
-            let _ = state_tx.send(CanState {
-                connected: false,
-                last_error: Some(e.to_string()),
-                ..Default::default()
-            });
+    // Retry open + init — SPI device may not be ready on boot
+    let mut can = loop {
+        if cancel.is_cancelled() {
             return;
         }
+        match Mcp2515::open(CAN_SPI_DEV, CAN_SPI_SPEED_HZ) {
+            Ok(mut c) => match c.init_500k() {
+                Ok(()) => {
+                    tracing::info!("MCP2515 CAN initialized (500kbps, normal mode)");
+                    break c;
+                }
+                Err(e) => {
+                    tracing::warn!("MCP2515 init failed: {e}, retrying in 5s");
+                    let _ = state_tx.send(CanState {
+                        connected: false,
+                        last_error: Some(e.to_string()),
+                        ..Default::default()
+                    });
+                }
+            },
+            Err(e) => {
+                tracing::warn!("MCP2515 SPI open failed: {e}, retrying in 5s");
+                let _ = state_tx.send(CanState {
+                    connected: false,
+                    last_error: Some(e.to_string()),
+                    ..Default::default()
+                });
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(5));
     };
-
-    if let Err(e) = can.init_500k() {
-        tracing::error!("MCP2515 init failed: {e}");
-        let _ = state_tx.send(CanState {
-            connected: false,
-            last_error: Some(e.to_string()),
-            ..Default::default()
-        });
-        return;
-    }
-
-    tracing::info!("MCP2515 CAN initialized (500kbps, normal mode)");
 
     let mut state = CanState {
         connected: true,

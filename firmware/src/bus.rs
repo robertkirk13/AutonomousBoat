@@ -288,7 +288,7 @@ fn i2c_read_block(fd: i32, reg: u8, len: usize) -> Result<Vec<u8>, I2cError> {
         Err(io::Error::last_os_error().into())
     } else {
         let block = unsafe { data.block };
-        let actual_len = block[0] as usize;
+        let actual_len = (block[0] as usize).min(len).min(32);
         Ok(block[1..1 + actual_len].to_vec())
     }
 }

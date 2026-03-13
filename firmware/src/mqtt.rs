@@ -113,7 +113,7 @@ pub async fn run(
                         Err(e) => {
                             tracing::warn!("MQTT connection error: {e}");
                             subscribed = false;
-                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            // Don't sleep here — rumqttc reconnects automatically on next poll()
                         }
                     }
                 }
@@ -144,15 +144,22 @@ pub async fn run(
             }
 
             result = power_rx.changed() => {
-                if result.is_err() { break; }
-                let state = power_rx.borrow_and_update().clone();
-                publish_json(&client, TOPIC_POWER, &state).await;
+                if result.is_err() {
+                    tracing::warn!("Power channel closed, stopping power publishes");
+                    // Continue loop — other channels may still be active
+                } else {
+                    let state = power_rx.borrow_and_update().clone();
+                    publish_json(&client, TOPIC_POWER, &state).await;
+                }
             }
 
             result = thermal_rx.changed() => {
-                if result.is_err() { break; }
-                let state = thermal_rx.borrow_and_update().clone();
-                publish_json(&client, TOPIC_THERMAL, &state).await;
+                if result.is_err() {
+                    tracing::warn!("Thermal channel closed, stopping thermal publishes");
+                } else {
+                    let state = thermal_rx.borrow_and_update().clone();
+                    publish_json(&client, TOPIC_THERMAL, &state).await;
+                }
             }
 
             _ = gps_interval.tick() => {
@@ -161,9 +168,12 @@ pub async fn run(
             }
 
             result = nav_rx.changed() => {
-                if result.is_err() { break; }
-                let state = nav_rx.borrow_and_update().clone();
-                publish_json(&client, TOPIC_NAV, &state).await;
+                if result.is_err() {
+                    tracing::warn!("Nav channel closed, stopping nav publishes");
+                } else {
+                    let state = nav_rx.borrow_and_update().clone();
+                    publish_json(&client, TOPIC_NAV, &state).await;
+                }
             }
 
             _ = status_interval.tick() => {

@@ -17,7 +17,14 @@ use types::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let _ = dotenvy::dotenv();
+    // Try .env in cwd first, then next to the binary (for deploy-to-home scenarios)
+    if dotenvy::dotenv().is_err() {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let _ = dotenvy::from_path(dir.join(".env"));
+            }
+        }
+    }
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -129,6 +136,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cancel.clone(),
     ));
 
+    // --- Motor output: sends MotorCommand as CAN frames (hw only) ---
+    #[cfg(feature = "hw")]
+    let motor_handle = tokio::spawn(tasks::motor::run(
+        motor_rx,
+        teleop_rx,
+        can_tx.clone(),
+        cancel.clone(),
+    ));
+
     // --- Sim: GPS from sim_world, motor commands drive sim_world ---
     #[cfg(feature = "sim")]
     let sim_gps_handle = {
@@ -185,10 +201,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Suppress unused warnings for CAN channel handles
-    let _ = can_tx;
+    // Suppress unused warnings for CAN channel handles not yet consumed
     let _ = _can_state_rx;
     let _ = _can_frame_rx;
+    #[cfg(not(feature = "hw"))]
+    drop(can_tx);
 
     // --- Wait for shutdown signal ---
     tokio::signal::ctrl_c().await?;
@@ -204,6 +221,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = can_handle.await;
         #[cfg(feature = "hw")]
         let _ = gps_handle.await;
+        #[cfg(feature = "hw")]
+        let _ = motor_handle.await;
         let _ = nav_handle.await;
         #[cfg(feature = "sim")]
         let _ = sim_gps_handle.await;
@@ -215,7 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Bus owner exits when all I2cBus handles are dropped
     drop(i2c_bus);
-    let _ = bus_handle.await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), bus_handle).await;
 
     tracing::info!("Clean shutdown complete");
     Ok(())

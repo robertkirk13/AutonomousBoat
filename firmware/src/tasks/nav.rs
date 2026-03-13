@@ -56,7 +56,19 @@ pub async fn run(
 
         let mission = mission_rx.borrow().clone();
         let gps = gps_rx.borrow().clone();
-        let heading = imu_rx.borrow().as_ref().map(|a| a.heading).unwrap_or(0.0);
+
+        // Wait for valid sensor data before running control loop
+        let heading = match imu_rx.borrow().as_ref().map(|a| a.heading) {
+            Some(h) => h,
+            None => {
+                tracing::debug!("Nav: waiting for IMU fix");
+                continue;
+            }
+        };
+        if gps.lat == 0.0 && gps.lon == 0.0 {
+            tracing::debug!("Nav: waiting for GPS fix");
+            continue;
+        }
 
         // Check if mission changed
         if mission.waypoints.is_empty() {

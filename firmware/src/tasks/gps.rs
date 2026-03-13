@@ -88,15 +88,20 @@ fn run_blocking(
     // Enable GPS via AT command port
     enable_gps();
 
-    // Open NMEA port
-    let port = match serialport::new(GPS_NMEA_DEV, GPS_BAUD)
-        .timeout(Duration::from_secs(2))
-        .open()
-    {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("Failed to open GPS NMEA port {GPS_NMEA_DEV}: {e}");
+    // Open NMEA port with retry (USB serial may enumerate late on boot)
+    let port = loop {
+        if cancel.is_cancelled() {
             return;
+        }
+        match serialport::new(GPS_NMEA_DEV, GPS_BAUD)
+            .timeout(Duration::from_millis(500))
+            .open()
+        {
+            Ok(p) => break p,
+            Err(e) => {
+                tracing::warn!("GPS NMEA port {GPS_NMEA_DEV} not available: {e}, retrying in 5s");
+                std::thread::sleep(Duration::from_secs(5));
+            }
         }
     };
 

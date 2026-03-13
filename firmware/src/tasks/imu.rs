@@ -12,11 +12,22 @@ pub async fn run(
 ) {
     let imu = Bno055::new(bus, BNO055_ADDR);
 
-    if let Err(e) = imu.setup().await {
-        tracing::error!("BNO055 setup failed: {e}");
-        return;
+    // Retry setup — I2C may not be ready immediately on boot
+    loop {
+        match imu.setup().await {
+            Ok(()) => {
+                tracing::info!("BNO055 initialized (NDOF mode)");
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("BNO055 setup failed: {e}, retrying in 2s");
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+                }
+            }
+        }
     }
-    tracing::info!("BNO055 initialized (NDOF mode)");
 
     loop {
         tokio::select! {

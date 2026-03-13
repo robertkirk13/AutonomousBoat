@@ -18,6 +18,9 @@ impl Bno055 {
 
     /// Initialize BNO055 into NDOF (9-DOF fusion) mode.
     pub async fn setup(&self) -> Result<(), I2cError> {
+        // BNO055 datasheet requires >= 400ms after power-on reset before mode writes
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
         self.bus
             .write_byte_data(self.addr, OPR_MODE, CONFIG_MODE)
             .await?;
