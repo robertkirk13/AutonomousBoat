@@ -1,10 +1,180 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigation } from '../context/NavigationContext';
 import { MEASUREMENT_CONFIGS } from '../types/index';
 import type { Waypoint } from '../types/index';
 
 const SPACING_PRESETS = [5, 10, 15, 20, 25];
 const ANGLE_PRESETS = [0, 45, 90, 135];
+
+/* ── Teleop Controls ── */
+
+const THRUST = 0.7;
+const TURN_THRUST = 0.5;
+const SEND_HZ = 10;
+
+type Direction = 'forward' | 'back' | 'left' | 'right';
+
+function dirToMotor(dirs: Set<Direction>): { left: number; right: number } {
+  let left = 0;
+  let right = 0;
+  if (dirs.has('forward')) { left += THRUST; right += THRUST; }
+  if (dirs.has('back')) { left -= THRUST; right -= THRUST; }
+  if (dirs.has('left')) { left -= TURN_THRUST; right += TURN_THRUST; }
+  if (dirs.has('right')) { left += TURN_THRUST; right -= TURN_THRUST; }
+  return {
+    left: Math.max(-1, Math.min(1, left)),
+    right: Math.max(-1, Math.min(1, right)),
+  };
+}
+
+const KEY_MAP: Record<string, Direction> = {
+  w: 'forward', arrowup: 'forward',
+  s: 'back', arrowdown: 'back',
+  a: 'left', arrowleft: 'left',
+  d: 'right', arrowright: 'right',
+};
+
+function TeleopControls() {
+  const { sendTeleop } = useNavigation();
+  const [speed, setSpeed] = useState(70);
+  const activeKeys = useRef(new Set<Direction>());
+  const activeTouch = useRef(new Set<Direction>());
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+
+  const sendCurrent = useCallback(() => {
+    const merged = new Set([...activeKeys.current, ...activeTouch.current]);
+    const { left, right } = dirToMotor(merged);
+    const scale = speedRef.current / 100;
+    sendTeleop(left * scale, right * scale);
+  }, [sendTeleop]);
+
+  const updateLoop = useCallback(() => {
+    const hasInput = activeKeys.current.size > 0 || activeTouch.current.size > 0;
+    if (hasInput && !intervalRef.current) {
+      sendCurrent();
+      intervalRef.current = setInterval(sendCurrent, 1000 / SEND_HZ);
+    } else if (!hasInput && intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+      sendTeleop(0, 0);
+    }
+  }, [sendCurrent, sendTeleop]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const dir = KEY_MAP[e.key.toLowerCase()];
+      if (!dir) return;
+      e.preventDefault();
+      activeKeys.current.add(dir);
+      updateLoop();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      const dir = KEY_MAP[e.key.toLowerCase()];
+      if (!dir) return;
+      activeKeys.current.delete(dir);
+      updateLoop();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      activeKeys.current.clear();
+    };
+  }, [updateLoop]);
+
+  const touchStart = (dir: Direction) => { activeTouch.current.add(dir); updateLoop(); };
+  const touchEnd = (dir: Direction) => { activeTouch.current.delete(dir); updateLoop(); };
+
+  return (
+    <div className="px-3.5 py-3 space-y-4">
+      {/* Speed control */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[9px] font-medium text-white/25 uppercase tracking-[0.1em]">Speed</span>
+          <span className="text-xs font-mono text-amber-400/80 tabular-nums">{speed}%</span>
+        </div>
+        <input
+          type="range"
+          min="10"
+          max="100"
+          step="10"
+          value={speed}
+          onChange={e => setSpeed(Number(e.target.value))}
+          className="w-full h-1.5 appearance-none bg-white/[0.06] rounded-full"
+          style={{ accentColor: '#f59e0b' }}
+        />
+        <div className="flex justify-between mt-1 text-[9px] font-mono text-white/15">
+          <span>10%</span>
+          <span>100%</span>
+        </div>
+      </div>
+
+      {/* Direction controls */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[9px] font-medium text-white/25 uppercase tracking-[0.1em]">Direction</span>
+          <span className="text-[9px] font-mono text-white/20">WASD</span>
+        </div>
+        <div className="flex flex-col items-center gap-1">
+          <DPadButton dir="forward" label="W" icon="up" onStart={touchStart} onEnd={touchEnd} />
+          <div className="flex gap-1">
+            <DPadButton dir="left" label="A" icon="left" onStart={touchStart} onEnd={touchEnd} />
+            <button
+              onMouseDown={() => { activeTouch.current.clear(); activeKeys.current.clear(); sendTeleop(0, 0); }}
+              className="w-11 h-11 rounded-xl bg-red-500/15 hover:bg-red-500/25 active:bg-red-500/35 border border-red-500/25 flex items-center justify-center transition-colors"
+            >
+              <svg className="w-4 h-4 text-red-400/70" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
+            <DPadButton dir="right" label="D" icon="right" onStart={touchStart} onEnd={touchEnd} />
+          </div>
+          <DPadButton dir="back" label="S" icon="down" onStart={touchStart} onEnd={touchEnd} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DPadButton({ dir, label, icon, onStart, onEnd }: {
+  dir: Direction;
+  label: string;
+  icon: 'up' | 'down' | 'left' | 'right';
+  onStart: (dir: Direction) => void;
+  onEnd: (dir: Direction) => void;
+}) {
+  const rotation = { up: 0, right: 90, down: 180, left: 270 }[icon];
+
+  return (
+    <button
+      onMouseDown={() => onStart(dir)}
+      onMouseUp={() => onEnd(dir)}
+      onMouseLeave={() => onEnd(dir)}
+      onTouchStart={(e) => { e.preventDefault(); onStart(dir); }}
+      onTouchEnd={(e) => { e.preventDefault(); onEnd(dir); }}
+      className="w-11 h-11 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:bg-white/[0.14] border border-white/[0.06] flex flex-col items-center justify-center gap-0.5 transition-colors"
+    >
+      <svg
+        className="w-3.5 h-3.5 text-white/45"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        style={{ transform: `rotate(${rotation}deg)` }}
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+      </svg>
+      <span className="text-[8px] font-mono text-white/20">{label}</span>
+    </button>
+  );
+}
+
+/* ── Mission Controls (autonomous mode) ── */
 
 function MissionControls() {
   const { boat, mission, startMission, pauseMission, resumeMission, stopMission, clearWaypoints } = useNavigation();
@@ -50,14 +220,14 @@ function MissionControls() {
             <button
               onClick={startMission}
               disabled={total === 0}
-              className="flex-1 bg-teal/90 hover:bg-teal disabled:bg-white/[0.06] disabled:text-white/20 text-[#08090d] font-semibold py-2.5 rounded-lg transition-colors text-sm"
+              className="flex-1 bg-teal/90 hover:bg-teal disabled:bg-white/[0.06] disabled:text-white/20 text-[#08090d] font-semibold py-2.5 rounded-xl transition-colors text-sm"
             >
               Start Mission
             </button>
             {total > 0 && (
               <button
                 onClick={clearWaypoints}
-                className="px-3 py-2.5 rounded-lg bg-white/[0.06] text-white/40 hover:text-white/60 hover:bg-white/[0.08] transition-colors text-sm"
+                className="px-3 py-2.5 rounded-xl bg-white/[0.06] text-white/40 hover:text-white/60 hover:bg-white/[0.08] transition-colors text-sm"
               >
                 Clear
               </button>
@@ -67,13 +237,13 @@ function MissionControls() {
           <>
             <button
               onClick={pauseMission}
-              className="flex-1 bg-amber-500/80 hover:bg-amber-500 text-white font-semibold py-2.5 rounded-lg transition-colors text-sm"
+              className="flex-1 bg-amber-500/80 hover:bg-amber-500 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm"
             >
               Pause
             </button>
             <button
               onClick={stopMission}
-              className="px-4 py-2.5 rounded-lg bg-white/[0.06] text-white/50 hover:text-white/70 hover:bg-white/[0.08] transition-colors text-sm"
+              className="px-4 py-2.5 rounded-xl bg-white/[0.06] text-white/50 hover:text-white/70 hover:bg-white/[0.08] transition-colors text-sm"
             >
               Stop
             </button>
@@ -82,13 +252,13 @@ function MissionControls() {
           <>
             <button
               onClick={resumeMission}
-              className="flex-1 bg-teal/90 hover:bg-teal text-[#08090d] font-semibold py-2.5 rounded-lg transition-colors text-sm"
+              className="flex-1 bg-teal/90 hover:bg-teal text-[#08090d] font-semibold py-2.5 rounded-xl transition-colors text-sm"
             >
               Resume
             </button>
             <button
               onClick={stopMission}
-              className="px-4 py-2.5 rounded-lg bg-white/[0.06] text-white/50 hover:text-white/70 hover:bg-white/[0.08] transition-colors text-sm"
+              className="px-4 py-2.5 rounded-xl bg-white/[0.06] text-white/50 hover:text-white/70 hover:bg-white/[0.08] transition-colors text-sm"
             >
               Stop
             </button>
@@ -96,7 +266,7 @@ function MissionControls() {
         ) : (
           <button
             onClick={clearWaypoints}
-            className="flex-1 bg-teal/90 hover:bg-teal text-[#08090d] font-semibold py-2.5 rounded-lg transition-colors text-sm"
+            className="flex-1 bg-teal/90 hover:bg-teal text-[#08090d] font-semibold py-2.5 rounded-xl transition-colors text-sm"
           >
             New Mission
           </button>
@@ -121,7 +291,7 @@ function WaypointModePane() {
         <button
           onClick={() => canEdit && setWaypointMode('manual')}
           disabled={!canEdit}
-          className={`flex-1 py-1.5 text-[11px] rounded-md transition-colors ${
+          className={`flex-1 py-1.5 text-[11px] rounded-lg transition-colors ${
             waypointMode === 'manual'
               ? 'bg-white/10 text-white/80'
               : 'text-white/30 hover:text-white/50'
@@ -132,7 +302,7 @@ function WaypointModePane() {
         <button
           onClick={() => canEdit && setWaypointMode('area')}
           disabled={!canEdit}
-          className={`flex-1 py-1.5 text-[11px] rounded-md transition-colors ${
+          className={`flex-1 py-1.5 text-[11px] rounded-lg transition-colors ${
             waypointMode === 'area'
               ? 'bg-teal-dim/30 text-teal'
               : 'text-white/30 hover:text-white/50'
@@ -152,7 +322,7 @@ function WaypointModePane() {
                   key={p}
                   onClick={() => canEdit && updateAreaCoverage({ lineSpacing: p })}
                   disabled={!canEdit}
-                  className={`flex-1 py-1 text-[10px] rounded transition-colors ${
+                  className={`flex-1 py-1 text-[10px] rounded-lg transition-colors ${
                     areaCoverage.lineSpacing === p ? 'bg-teal-dim/30 text-teal' : 'text-white/30 hover:bg-white/[0.04]'
                   }`}
                 >
@@ -170,7 +340,7 @@ function WaypointModePane() {
                   key={p}
                   onClick={() => canEdit && updateAreaCoverage({ angle: p })}
                   disabled={!canEdit}
-                  className={`flex-1 py-1 text-[10px] rounded transition-colors ${
+                  className={`flex-1 py-1 text-[10px] rounded-lg transition-colors ${
                     areaCoverage.angle === p ? 'bg-teal-dim/30 text-teal' : 'text-white/30 hover:bg-white/[0.04]'
                   }`}
                 >
@@ -195,7 +365,7 @@ function WaypointModePane() {
           <button
             onClick={generateCoveragePath}
             disabled={!canEdit || !canGenerate}
-            className={`w-full py-2 text-xs font-medium rounded-lg transition-colors ${
+            className={`w-full py-2 text-xs font-medium rounded-xl transition-colors ${
               canGenerate
                 ? 'bg-teal/80 hover:bg-teal text-[#08090d]'
                 : 'bg-white/[0.04] text-white/20'
@@ -220,14 +390,14 @@ function WaypointItem({ waypoint, index, isExpanded, onToggle }: {
   const isActive = mission.currentWaypointIndex === index;
 
   return (
-    <div className={`rounded-lg overflow-hidden transition-colors ${
+    <div className={`rounded-xl overflow-hidden transition-colors ${
       waypoint.completed ? 'opacity-50' : ''
     } ${isActive ? 'ring-1 ring-teal/40' : ''}`}>
       <div
         className="flex items-center gap-2.5 py-2 px-2.5 cursor-pointer hover:bg-white/[0.03] transition-colors"
         onClick={onToggle}
       >
-        <div className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-semibold shrink-0 ${
+        <div className={`w-5 h-5 rounded-lg flex items-center justify-center text-[10px] font-semibold shrink-0 ${
           waypoint.completed ? 'bg-emerald-500/70 text-white' : isActive ? 'bg-teal/70 text-white' : 'bg-white/10 text-white/60'
         }`}>
           {waypoint.completed ? (
@@ -245,7 +415,7 @@ function WaypointItem({ waypoint, index, isExpanded, onToggle }: {
           </div>
         </div>
         {waypoint.takeMeasurement && (
-          <span className="text-[9px] text-white/30 bg-white/[0.06] px-1.5 py-0.5 rounded">
+          <span className="text-[9px] text-white/30 bg-white/[0.06] px-1.5 py-0.5 rounded-md">
             {waypoint.measurementTypes.length}
           </span>
         )}
@@ -267,7 +437,7 @@ function WaypointItem({ waypoint, index, isExpanded, onToggle }: {
                   key={config.type}
                   onClick={() => canEdit && toggleMeasurement(waypoint.id, config.type)}
                   disabled={!canEdit}
-                  className={`text-left text-[10px] px-2 py-1.5 rounded transition-colors flex items-center gap-1.5 ${
+                  className={`text-left text-[10px] px-2 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
                     active ? 'bg-white/10 text-white/75' : 'text-white/30 hover:bg-white/[0.04]'
                   } ${!canEdit ? 'opacity-40' : ''}`}
                 >
@@ -280,7 +450,7 @@ function WaypointItem({ waypoint, index, isExpanded, onToggle }: {
           {canEdit && (
             <button
               onClick={() => removeWaypoint(waypoint.id)}
-              className="mt-2 w-full text-red-400/60 hover:text-red-400 hover:bg-red-500/[0.06] text-[10px] py-1.5 rounded transition-colors"
+              className="mt-2 w-full text-red-400/60 hover:text-red-400 hover:bg-red-500/[0.06] text-[10px] py-1.5 rounded-lg transition-colors"
             >
               Remove
             </button>
@@ -377,7 +547,7 @@ function DataCollectionPane() {
               onChange={e => canEdit && updateDataCollection({ intervalMeters: Number(e.target.value) })}
               disabled={!canEdit}
               className="w-full h-1 appearance-none bg-white/10 rounded-full"
-              style={{ accentColor: 'oklch(0.72 0.14 185)' }}
+              style={{ accentColor: 'oklch(0.65 0.17 50)' }}
             />
           </div>
 
@@ -389,7 +559,7 @@ function DataCollectionPane() {
                   key={config.type}
                   onClick={() => canEdit && toggleDataCollectionMeasurement(config.type)}
                   disabled={!canEdit}
-                  className={`text-left text-[10px] px-2 py-1.5 rounded transition-colors flex items-center gap-1.5 ${
+                  className={`text-left text-[10px] px-2 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
                     active ? 'bg-white/10 text-white/75' : 'text-white/30 hover:bg-white/[0.04]'
                   } ${!canEdit ? 'opacity-40' : ''}`}
                 >
@@ -423,7 +593,7 @@ function MeasurementResults() {
           const config = MEASUREMENT_CONFIGS.find(c => c.type === type);
           if (!config) return null;
           return (
-            <div key={type} className="bg-white/[0.03] rounded-md px-2 py-1.5">
+            <div key={type} className="bg-white/[0.03] rounded-xl px-2 py-1.5">
               <div className="text-[9px] text-white/25">{config.icon} {config.label}</div>
               <div className="text-xs font-mono text-white/70 mt-0.5">
                 {(value as number).toFixed(1)} <span className="text-white/30">{config.unit}</span>
@@ -436,29 +606,93 @@ function MeasurementResults() {
   );
 }
 
+/* ── Mode Dropdown ── */
+
+function ModeDropdown() {
+  const { controlMode, setControlMode } = useNavigation();
+
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          className={`flex items-center gap-1.5 text-[11px] font-medium tracking-wide rounded-lg border px-2.5 py-1 outline-none cursor-pointer transition-colors ${
+            controlMode === 'autonomous'
+              ? 'border-teal/30 text-teal bg-teal/10 hover:bg-teal/15'
+              : 'border-amber-500/30 text-amber-400 bg-amber-500/10 hover:bg-amber-500/15'
+          }`}
+        >
+          {controlMode === 'autonomous' ? 'Autonomous' : 'Teleop'}
+          <svg className="w-3 h-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </DropdownMenu.Trigger>
+
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="min-w-[140px] bg-[#1a1c24] border border-white/[0.08] rounded-xl p-1 shadow-xl shadow-black/50 backdrop-blur-xl z-[9999]"
+          sideOffset={6}
+          align="end"
+        >
+          <DropdownMenu.Item
+            className={`flex items-center gap-2 px-2.5 py-2 text-[11px] font-medium rounded-lg outline-none cursor-pointer transition-colors ${
+              controlMode === 'autonomous' ? 'text-teal bg-teal/10' : 'text-white/60 hover:text-white/80 hover:bg-white/[0.06]'
+            }`}
+            onSelect={() => setControlMode('autonomous')}
+          >
+            <div className={`w-1.5 h-1.5 rounded-full ${controlMode === 'autonomous' ? 'bg-teal' : 'bg-white/15'}`} />
+            Autonomous
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            className={`flex items-center gap-2 px-2.5 py-2 text-[11px] font-medium rounded-lg outline-none cursor-pointer transition-colors ${
+              controlMode === 'teleop' ? 'text-amber-400 bg-amber-500/10' : 'text-white/60 hover:text-white/80 hover:bg-white/[0.06]'
+            }`}
+            onSelect={() => setControlMode('teleop')}
+          >
+            <div className={`w-1.5 h-1.5 rounded-full ${controlMode === 'teleop' ? 'bg-amber-400' : 'bg-white/15'}`} />
+            Teleop
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
+/* ── Main Sidebar ── */
+
 export default function Sidebar() {
+  const { controlMode } = useNavigation();
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="px-3.5 pt-3.5 pb-2 shrink-0">
-        <div className="text-sm font-semibold text-white/80 tracking-tight">AquaNav</div>
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold text-white/80 tracking-tight">AquaNav</div>
+          <ModeDropdown />
+        </div>
       </div>
 
       <div className="h-px bg-white/[0.04]" />
 
-      <MissionControls />
-
-      <div className="h-px bg-white/[0.04]" />
-
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto">
-        <WaypointModePane />
-        <div className="h-px bg-white/[0.04]" />
-        <WaypointList />
-        <div className="h-px bg-white/[0.04]" />
-        <DataCollectionPane />
-        <MeasurementResults />
-      </div>
+      {controlMode === 'autonomous' ? (
+        <>
+          <MissionControls />
+          <div className="h-px bg-white/[0.04]" />
+          <div className="flex-1 overflow-y-auto">
+            <WaypointModePane />
+            <div className="h-px bg-white/[0.04]" />
+            <WaypointList />
+            <div className="h-px bg-white/[0.04]" />
+            <DataCollectionPane />
+            <MeasurementResults />
+          </div>
+        </>
+      ) : (
+        <div className="flex-1 overflow-y-auto">
+          <TeleopControls />
+        </div>
+      )}
     </div>
   );
 }

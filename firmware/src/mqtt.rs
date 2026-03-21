@@ -83,8 +83,9 @@ pub async fn run(
                             if !subscribed {
                                 let _ = client_sub.subscribe(TOPIC_MISSION_SET, QoS::AtLeastOnce).await;
                                 let _ = client_sub.subscribe(TOPIC_MOTOR_SET, QoS::AtMostOnce).await;
+                                let _ = client_sub.subscribe(TOPIC_COMMAND, QoS::AtLeastOnce).await;
                                 subscribed = true;
-                                tracing::info!("Subscribed to {TOPIC_MISSION_SET} and {TOPIC_MOTOR_SET}");
+                                tracing::info!("Subscribed to {TOPIC_MISSION_SET}, {TOPIC_MOTOR_SET}, {TOPIC_COMMAND}");
                             }
                         }
                         Ok(Event::Incoming(Packet::Publish(publish))) => {
@@ -105,6 +106,13 @@ pub async fn run(
                                     }
                                     Err(e) => {
                                         tracing::warn!("Failed to parse motor command: {e}");
+                                    }
+                                }
+                            } else if publish.topic == TOPIC_COMMAND {
+                                if let Ok(cmd) = serde_json::from_slice::<serde_json::Value>(&publish.payload) {
+                                    if cmd.get("action").and_then(|a| a.as_str()) == Some("reboot") {
+                                        tracing::warn!("Reboot command received via MQTT — rebooting");
+                                        let _ = std::process::Command::new("sudo").args(["reboot"]).spawn();
                                     }
                                 }
                             }

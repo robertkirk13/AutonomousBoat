@@ -54,6 +54,7 @@ pub const TOPIC_NAV: &str = "boat/nav";
 // MQTT topics (subscribe)
 pub const TOPIC_MISSION_SET: &str = "boat/mission/set";
 pub const TOPIC_MOTOR_SET: &str = "boat/motor/set";
+pub const TOPIC_COMMAND: &str = "boat/command";
 
 // Navigation
 pub const NAV_INTERVAL: Duration = Duration::from_millis(200); // 5Hz

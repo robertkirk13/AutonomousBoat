@@ -10,3 +10,6 @@ simulator/dist/
 # Environment
 .env
 .env.local
+
+# Downloaded OS images
+.cache/

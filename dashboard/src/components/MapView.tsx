@@ -31,7 +31,7 @@ export default function MapView() {
 
   if (!modules) {
     return (
-      <div className="w-full h-full flex items-center justify-center" style={{ background: '#1a1a2e' }}>
+      <div className="w-full h-full flex items-center justify-center" style={{ background: '#1a1a1a' }}>
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-white/30 border-t-white/80 rounded-full animate-spin" />
           <div className="text-white/40">Loading map...</div>
@@ -124,18 +124,40 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
   }, [L]);
 
   const boatIcon = useMemo(() => {
+    const accent = 'oklch(0.65 0.17 50)';
     return L.divIcon({
       className: 'boat-marker',
       html: `
-        <div style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;transform:rotate(${boat.heading}deg);">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2L4 20H12H20L12 2Z" fill="rgba(255,255,255,0.9)" stroke="rgba(255,255,255,1)" stroke-width="1"/>
-            <circle cx="12" cy="12" r="3" fill="rgba(0,0,0,0.3)"/>
+        <div style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;transform:rotate(${boat.heading}deg);">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Outer glow -->
+            <defs>
+              <radialGradient id="boat-glow" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="${accent}" stop-opacity="0.25"/>
+                <stop offset="100%" stop-color="${accent}" stop-opacity="0"/>
+              </radialGradient>
+              <filter id="boat-shadow" x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
+              </filter>
+            </defs>
+            <circle cx="24" cy="24" r="20" fill="url(#boat-glow)"/>
+            <!-- Heading cone -->
+            <path d="M24 4 L20 16 L28 16 Z" fill="${accent}" opacity="0.2"/>
+            <!-- Hull -->
+            <path d="M24 8 L17 28 C17 32 19 36 24 38 C29 36 31 32 31 28 Z" fill="rgba(20,22,30,0.9)" stroke="rgba(255,255,255,0.6)" stroke-width="1.2" stroke-linejoin="round" filter="url(#boat-shadow)"/>
+            <!-- Keel line -->
+            <line x1="24" y1="12" x2="24" y2="34" stroke="rgba(255,255,255,0.12)" stroke-width="0.8"/>
+            <!-- Deck -->
+            <ellipse cx="24" cy="24" rx="4.5" ry="7" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.15)" stroke-width="0.6"/>
+            <!-- Bow accent -->
+            <circle cx="24" cy="13" r="2" fill="${accent}" opacity="0.9"/>
+            <!-- Stern marks -->
+            <line x1="20" y1="32" x2="28" y2="32" stroke="rgba(255,255,255,0.2)" stroke-width="0.6" stroke-linecap="round"/>
           </svg>
         </div>
       `,
-      iconSize: [40, 40],
-      iconAnchor: [20, 20],
+      iconSize: [56, 56],
+      iconAnchor: [28, 28],
     });
   }, [L, boat.heading]);
 
@@ -188,7 +210,7 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
         center={[boat.position.lat, boat.position.lng]}
         zoom={15}
         className="w-full h-full"
-        style={{ background: '#1a1a2e' }}
+        style={{ background: '#1a1a1a' }}
         ref={mapRef}
       >
         {mapMode === 'map' ? (

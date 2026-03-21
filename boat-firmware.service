@@ -8,10 +8,15 @@ Type=simple
 ExecStart=/home/chuck/boat-firmware
 WorkingDirectory=/home/chuck
 EnvironmentFile=/home/chuck/.env
-Restart=on-failure
+Restart=always
 RestartSec=5
 User=root
 TimeoutStopSec=10
+# Restart if it uses too much memory (256MB limit for Pi Zero 2W)
+MemoryMax=256M
+# Always restart, even on clean exit (autonomous system must stay running)
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Install]
 WantedBy=multi-user.target

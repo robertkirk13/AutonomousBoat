@@ -396,5 +396,9 @@ export function useBoatMqtt() {
     return () => cancelAnimationFrame(rafId);
   }, []);
 
-  return { boat, publish, calibrateUpright, calibrateCompass };
+  const rebootPi = useCallback(() => {
+    publish('boat/command', { action: 'reboot' });
+  }, [publish]);
+
+  return { boat, publish, calibrateUpright, calibrateCompass, rebootPi };
 }

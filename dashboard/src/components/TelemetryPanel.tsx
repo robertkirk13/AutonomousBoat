@@ -1,3 +1,4 @@
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigation } from '../context/NavigationContext';
 import { PowerPanel } from './PowerPanel';
 
@@ -85,18 +86,18 @@ function CompassRing({ heading }: { heading: number }) {
         y1={cy}
         x2={cx + needleLen * Math.cos(needleRad)}
         y2={cy + needleLen * Math.sin(needleRad)}
-        stroke="oklch(0.72 0.14 185)"
+        stroke="oklch(0.65 0.17 50)"
         strokeWidth={1.5}
         strokeLinecap="round"
       />
       {/* Center dot */}
-      <circle cx={cx} cy={cy} r={2} fill="oklch(0.72 0.14 185)" opacity={0.6} />
+      <circle cx={cx} cy={cy} r={2} fill="oklch(0.65 0.17 50)" opacity={0.6} />
     </svg>
   );
 }
 
 export default function TelemetryPanel() {
-  const { boat, calibrateUpright, calibrateCompass } = useNavigation();
+  const { boat, calibrateUpright, calibrateCompass, rebootPi } = useNavigation();
 
   const findChannel = (label: string) =>
     boat.power?.channels.find((ch) => ch.label === label);
@@ -211,27 +212,61 @@ export default function TelemetryPanel() {
         </>
       )}
 
-      {/* Calibration actions */}
+      {/* Calibration dropdown */}
       <div className="mt-auto">
         <div className="h-px bg-white/[0.04] mx-3" />
-        <Section title="Calibration">
-          <div className="flex flex-col gap-1.5">
-            <button
-              type="button"
-              onClick={calibrateUpright}
-              className="w-full px-2.5 py-1.5 text-[10px] font-medium tracking-wide rounded bg-white/[0.04] border border-white/[0.06] text-white/50 hover:text-white/80 hover:bg-white/[0.08] transition-colors text-left"
-            >
-              Set Upright
-            </button>
-            <button
-              type="button"
-              onClick={calibrateCompass}
-              className="w-full px-2.5 py-1.5 text-[10px] font-medium tracking-wide rounded bg-white/[0.04] border border-white/[0.06] text-white/50 hover:text-white/80 hover:bg-white/[0.08] transition-colors text-left"
-            >
-              Set North
-            </button>
-          </div>
-        </Section>
+        <div className="px-3.5 py-2.5">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                className="w-full flex items-center justify-between px-2.5 py-2 text-[10px] font-medium tracking-wide rounded-lg bg-white/[0.04] border border-white/[0.06] text-white/50 hover:text-white/80 hover:bg-white/[0.08] transition-colors"
+              >
+                Calibrate
+                <svg className="w-3 h-3 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                </svg>
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                className="min-w-[160px] bg-[#1a1c24] border border-white/[0.08] rounded-xl p-1 shadow-xl shadow-black/50 backdrop-blur-xl z-[9999]"
+                sideOffset={6}
+                align="center"
+                side="top"
+              >
+                <DropdownMenu.Item
+                  className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-white/60 hover:text-white/90 hover:bg-white/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
+                  onSelect={calibrateUpright}
+                >
+                  <svg className="w-3.5 h-3.5 text-white/35" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-4 4m4-4l4 4" />
+                  </svg>
+                  Set Upright
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-white/60 hover:text-white/90 hover:bg-white/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
+                  onSelect={calibrateCompass}
+                >
+                  <svg className="w-3.5 h-3.5 text-white/35" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l2.09 6.26L20 9.27l-5 3.64L16.18 20 12 16.9 7.82 20 9 12.91l-5-3.64 5.91-1.01L12 2z" />
+                  </svg>
+                  Set North
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator className="h-px bg-white/[0.06] my-1" />
+                <DropdownMenu.Item
+                  className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-red-400/70 hover:text-red-400 hover:bg-red-500/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
+                  onSelect={rebootPi}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Reboot Pi
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        </div>
       </div>
     </div>
   );
@@ -251,9 +286,9 @@ function MotorBar({ label, thrust, current, temp }: {
         <span className="text-[9px] text-white/30 uppercase tracking-wide">{label}</span>
         <span className="text-[10px] font-mono text-white/50">{current.toFixed(1)}A</span>
       </div>
-      <div className="h-5 bg-white/[0.04] rounded overflow-hidden relative">
+      <div className="h-5 bg-white/[0.04] rounded-lg overflow-hidden relative">
         <div
-          className="absolute inset-y-0 left-0 bg-teal/25 transition-all duration-300 rounded"
+          className="absolute inset-y-0 left-0 bg-teal/25 transition-all duration-300 rounded-lg"
           style={{ width: `${pct}%` }}
         />
         <div className="absolute inset-0 flex items-center justify-center text-[10px] font-mono font-medium text-white/60">
