@@ -162,6 +162,7 @@ export function useBoatMqtt() {
   const [boat, setBoat] = useState<BoatState>(DEFAULT_BOAT_STATE);
   const clientRef = useRef<mqtt.MqttClient | null>(null);
   const heartbeatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusClockRef = useRef<{ uptimeSecs: number; receivedAt: number } | null>(null);
 
   // Interpolation channels for each data stream
   const imuChannel = useRef(createChannel<ImuData>());
@@ -169,7 +170,6 @@ export function useBoatMqtt() {
   const powerChannel = useRef(createChannel<PowerData>());
   const thermalChannel = useRef(createChannel<ThermalData>());
   const navChannel = useRef(createChannel<NavData>());
-  const uptimeChannel = useRef(createChannel<number>());
 
   // Connection state doesn't need interpolation — store in refs updated immediately
   const connState = useRef({ mqttConnected: false, boatOnline: false });
@@ -262,7 +262,10 @@ export function useBoatMqtt() {
             navChannel.current.push(data as NavData);
             break;
           case 'boat/status':
-            uptimeChannel.current.push(data.uptime_secs ?? 0);
+            statusClockRef.current = {
+              uptimeSecs: data.uptime_secs ?? 0,
+              receivedAt: performance.now(),
+            };
             break;
         }
       } catch {
@@ -287,7 +290,6 @@ export function useBoatMqtt() {
       const power = powerChannel.current.sample();
       const thermal = thermalChannel.current.sample();
       const nav = navChannel.current.sample();
-      const uptime = uptimeChannel.current.sample();
 
       // Interpolate IMU (euler for display, quaternion for 3D — no gimbal lock)
       let heading = 0, roll = 0, pitch = 0;
@@ -368,10 +370,13 @@ export function useBoatMqtt() {
         }
       }
 
-      // Uptime: just use latest
+      // Advance uptime locally between status packets so the UI keeps ticking.
       let uptimeVal = 0;
-      if (uptime) {
-        uptimeVal = 't' in uptime ? uptime.curr : uptime.latest;
+      if (statusClockRef.current) {
+        const elapsedSecs = connState.current.boatOnline
+          ? (performance.now() - statusClockRef.current.receivedAt) / 1000
+          : 0;
+        uptimeVal = statusClockRef.current.uptimeSecs + elapsedSecs;
       }
 
       setBoat({

@@ -2,6 +2,7 @@ import { useNavigation } from '../context/NavigationContext';
 
 export default function StatusBar() {
   const { boat, mission } = useNavigation();
+  const uptimeSeconds = Math.floor(boat.uptime);
 
   const mpsToKnots = (mps: number) => mps * 1.94384;
 
@@ -20,7 +21,7 @@ export default function StatusBar() {
           <>
             <div className="h-4 w-px bg-white/10" />
             <span className="text-white/40 text-xs font-mono">
-              Up {Math.floor(boat.uptime / 60)}m {boat.uptime % 60}s
+              Up {Math.floor(uptimeSeconds / 60)}m {uptimeSeconds % 60}s
             </span>
           </>
         )}

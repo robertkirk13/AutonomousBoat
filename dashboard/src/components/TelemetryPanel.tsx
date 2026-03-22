@@ -98,6 +98,7 @@ function CompassRing({ heading }: { heading: number }) {
 
 export default function TelemetryPanel() {
   const { boat, calibrateUpright, calibrateCompass, rebootPi } = useNavigation();
+  const uptimeSeconds = Math.floor(boat.uptime);
 
   const findChannel = (label: string) =>
     boat.power?.channels.find((ch) => ch.label === label);
@@ -125,7 +126,7 @@ export default function TelemetryPanel() {
         </span>
         {boat.uptime > 0 && (
           <span className="text-[10px] font-mono text-white/20 ml-auto">
-            {Math.floor(boat.uptime / 60)}:{String(Math.round(boat.uptime) % 60).padStart(2, '0')}
+            {Math.floor(uptimeSeconds / 60)}:{String(uptimeSeconds % 60).padStart(2, '0')}
           </span>
         )}
       </div>
