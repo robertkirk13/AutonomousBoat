@@ -13,3 +13,6 @@ simulator/dist/
 
 # Downloaded OS images
 .cache/
+
+# DSstore
+.DS_Store
