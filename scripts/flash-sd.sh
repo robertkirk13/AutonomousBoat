@@ -3,7 +3,7 @@
 # flash-sd.sh — Flash an SD card with headless Raspberry Pi OS for BoatCore V1.0
 #
 # Usage:
-#   ./flash-sd.sh [options]
+#   ./scripts/flash-sd.sh [options]
 #
 # Options:
 #   -d DISK       Target disk (e.g. disk4). Auto-detected if only one removable disk.
@@ -18,6 +18,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Defaults
 HOSTNAME="castaway"
@@ -130,7 +131,7 @@ read -rp "Type 'yes' to continue: " CONFIRM
 [[ "$CONFIRM" == "yes" ]] || { echo "Aborted."; exit 1; }
 
 # -- Download Pi OS image if needed --
-IMAGE_DIR="$SCRIPT_DIR/.cache"
+IMAGE_DIR="$REPO_ROOT/.cache"
 mkdir -p "$IMAGE_DIR"
 
 if [[ -z "$IMAGE" ]]; then
@@ -337,12 +338,17 @@ fi
 
 # Install systemd services
 echo "==> Installing systemd services..."
-sudo cp ~/AutonomousBoat/boat-firmware.service /etc/systemd/system/
-sudo cp ~/AutonomousBoat/ssd1306-dashboard.service /etc/systemd/system/
+
+# Rewrite default home-directory paths to match the current login user.
+sed "s|/home/chuck|/home/$(whoami)|g" \
+    ~/AutonomousBoat/deploy/systemd/boat-firmware.service | sudo tee /etc/systemd/system/boat-firmware.service > /dev/null
+
+sed "s|/home/chuck|/home/$(whoami)|g" \
+    ~/AutonomousBoat/deploy/systemd/ssd1306-dashboard.service | sudo tee /etc/systemd/system/ssd1306-dashboard.service > /dev/null
 
 # Fix camera service paths for this user
-sed "s|/home/pi|/home/$(whoami)|g; s|User=pi|User=$(whoami)|" \
-    ~/AutonomousBoat/camera-stream.service | sudo tee /etc/systemd/system/camera-stream.service > /dev/null
+sed "s|/home/chuck|/home/$(whoami)|g; s|User=chuck|User=$(whoami)|" \
+    ~/AutonomousBoat/deploy/systemd/camera-stream.service | sudo tee /etc/systemd/system/camera-stream.service > /dev/null
 
 sudo systemctl daemon-reload
 sudo systemctl enable boat-firmware ssd1306-dashboard camera-stream
@@ -382,8 +388,8 @@ sed -i '' "s|__USERNAME__|${USERNAME}|g" "$BOOT_MOUNT/firstrun.sh"
 
 # Read MQTT env from firmware/.env
 MQTT_ENV=""
-if [[ -f "$SCRIPT_DIR/firmware/.env" ]]; then
-    MQTT_ENV=$(cat "$SCRIPT_DIR/firmware/.env")
+if [[ -f "$REPO_ROOT/firmware/.env" ]]; then
+    MQTT_ENV=$(cat "$REPO_ROOT/firmware/.env")
 else
     warn "firmware/.env not found — MQTT credentials will need to be set manually on the Pi"
     MQTT_ENV="# MQTT credentials not configured — edit this file

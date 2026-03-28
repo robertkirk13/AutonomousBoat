@@ -5,7 +5,7 @@ Serves frames from the Pi CSI camera as an MJPEG stream over HTTP.
 Designed for Raspberry Pi Zero 2W with picamera2.
 
 Usage:
-    python3 camera_stream.py [--port 8554] [--width 640] [--height 480] [--fps 15]
+    python3 scripts/camera_stream.py [--port 8554] [--width 640] [--height 480] [--fps 15]
 """
 
 import argparse

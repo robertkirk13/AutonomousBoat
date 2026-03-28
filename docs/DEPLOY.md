@@ -62,8 +62,8 @@ Ctrl-C to stop.
 ```bash
 # Copy service files (from the repo on the Pi)
 cd ~/AutonomousBoat
-sudo cp boat-firmware.service /etc/systemd/system/
-sudo cp ssd1306-dashboard.service /etc/systemd/system/
+sudo cp deploy/systemd/boat-firmware.service /etc/systemd/system/
+sudo cp deploy/systemd/ssd1306-dashboard.service /etc/systemd/system/
 
 # Reload and enable both services
 sudo systemctl daemon-reload
@@ -146,7 +146,7 @@ If devices are missing, the EG25-G modem may not be powered or enumerated. Check
 **Display stuck/garbled:**
 ```bash
 sudo systemctl stop ssd1306-dashboard
-sudo python3 ~/AutonomousBoat/reset_ssd1306.py
+sudo python3 ~/AutonomousBoat/scripts/reset_ssd1306.py
 sudo systemctl start ssd1306-dashboard
 ```
 

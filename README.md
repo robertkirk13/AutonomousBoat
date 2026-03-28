@@ -2,6 +2,15 @@
 
 Autonomous boat firmware (Rust/tokio) + React dashboard for Raspberry Pi Zero 2W with custom BoatCore V1.0 PCB.
 
+## Repo Layout
+
+- `firmware/` - Rust firmware for the boat controller
+- `dashboard/` - React dashboard for live telemetry
+- `simulator/` - simulator UI and support code
+- `scripts/` - hardware bring-up, diagnostics, and service helper scripts
+- `deploy/systemd/` - systemd unit files for Pi services
+- `docs/` - deployment notes and hardware reference docs
+
 ## Hardware
 
 ### I2C Bus 1 Devices
@@ -131,34 +140,34 @@ Run the test scripts to validate each subsystem:
 cd ~/AutonomousBoat
 
 # Power monitors
-python3 check_ina228.py
+python3 scripts/check_ina228.py
 
 # Continuous power readings
-python3 read_ina228.py
+python3 scripts/read_ina228.py
 
 # IMU
-python3 read_imu.py
+python3 scripts/read_imu.py
 
 # Temperature sensors
-python3 read_temp.py
+python3 scripts/read_temp.py
 
 # OLED display
-python3 check_ssd1306.py
+python3 scripts/check_ssd1306.py
 
 # CAN bus (TX test - expects TX errors without a second node)
-sudo python3 check_can.py
+sudo python3 scripts/check_can.py
 
 # CAN bus listener
-sudo python3 listen_can.py
+sudo python3 scripts/listen_can.py
 
 # If display is stuck/blank after power loss
-sudo python3 reset_ssd1306.py
+sudo python3 scripts/reset_ssd1306.py
 ```
 
 ### 9. Install OLED dashboard service
 
 ```bash
-sudo cp ssd1306-dashboard.service /etc/systemd/system/
+sudo cp deploy/systemd/ssd1306-dashboard.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable ssd1306-dashboard
 sudo systemctl start ssd1306-dashboard
@@ -203,7 +212,7 @@ scp firmware/.env chuck@castaway.local:~/.env
 Install and enable the systemd service:
 
 ```bash
-sudo cp boat-firmware.service /etc/systemd/system/
+sudo cp deploy/systemd/boat-firmware.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable boat-firmware
 sudo systemctl start boat-firmware
@@ -260,15 +269,15 @@ VITE_MQTT_PASS=your_pass
 
 | Script              | Purpose                                    |
 |---------------------|--------------------------------------------|
-| `check_ina228.py`   | Probe all INA228s, read ID/config registers|
-| `read_ina228.py`    | Continuous power/energy/charge readings    |
-| `read_imu.py`       | BNO055 euler angle reader                  |
-| `read_temp.py`      | TMP1075 dual temperature reader            |
-| `debug_i2c.py`      | I2C bus scanner                            |
-| `check_ssd1306.py`  | OLED dashboard with live power stats       |
-| `reset_ssd1306.py`  | Reset display from stuck state             |
-| `check_can.py`      | MCP2515 CAN TX test                        |
-| `listen_can.py`     | MCP2515 CAN RX listener                   |
-| `toggle_gpio21.py`  | GPIO21 PWM toggle test                     |
-| `toggle_all_gpios.py` | All GPIO PWM test                        |
-| `cpu_load.py`       | CPU burn test                              |
+| `scripts/check_ina228.py`   | Probe all INA228s, read ID/config registers|
+| `scripts/read_ina228.py`    | Continuous power/energy/charge readings    |
+| `scripts/read_imu.py`       | BNO055 euler angle reader                  |
+| `scripts/read_temp.py`      | TMP1075 dual temperature reader            |
+| `scripts/debug_i2c.py`      | I2C bus scanner                            |
+| `scripts/check_ssd1306.py`  | OLED dashboard with live power stats       |
+| `scripts/reset_ssd1306.py`  | Reset display from stuck state             |
+| `scripts/check_can.py`      | MCP2515 CAN TX test                        |
+| `scripts/listen_can.py`     | MCP2515 CAN RX listener                    |
+| `scripts/toggle_gpio21.py`  | GPIO21 PWM toggle test                     |
+| `scripts/toggle_all_gpios.py` | All GPIO PWM test                        |
+| `scripts/cpu_load.py`       | CPU burn test                              |

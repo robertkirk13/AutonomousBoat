@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=chuck
-ExecStart=/usr/bin/python3 /home/chuck/AutonomousBoat/camera_stream.py --port 8554 --width 640 --height 480 --fps 15
+ExecStart=/usr/bin/python3 /home/chuck/AutonomousBoat/scripts/camera_stream.py --port 8554 --width 640 --height 480 --fps 15
 Restart=always
 RestartSec=3
 

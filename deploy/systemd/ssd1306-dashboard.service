@@ -6,9 +6,9 @@ Before=shutdown.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /home/chuck/AutonomousBoat/check_ssd1306.py
-ExecStop=/usr/bin/python3 /home/chuck/AutonomousBoat/ssd1306_shutdown.py
-WorkingDirectory=/home/chuck/AutonomousBoat
+ExecStart=/usr/bin/python3 /home/chuck/AutonomousBoat/scripts/check_ssd1306.py
+ExecStop=/usr/bin/python3 /home/chuck/AutonomousBoat/scripts/ssd1306_shutdown.py
+WorkingDirectory=/home/chuck/AutonomousBoat/scripts
 Restart=on-failure
 RestartSec=5
 User=root

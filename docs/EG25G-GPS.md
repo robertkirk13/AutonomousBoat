@@ -122,11 +122,11 @@ Key sentence types:
 
 ## Test Script
 
-Use `check_gps.py` in the repo root:
+Use `scripts/check_gps.py` from the repo root:
 
 ```bash
 pip3 install pyserial
-sudo python3 check_gps.py
+sudo python3 scripts/check_gps.py
 ```
 
 This enables GPS via AT commands and prints parsed coordinates from NMEA.
