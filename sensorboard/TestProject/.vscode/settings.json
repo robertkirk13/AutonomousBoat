@@ -3,11 +3,14 @@
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
-  "idf.currentSetup": "/Users/harishthehershey/.espressif/v6.0/esp-idf",
+  "idf.espIdfPath": "C:/Users/Adam/esp/v5.5.2/esp-idf",
+  "idf.toolsPath": "C:/Users/Adam/.espressif",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
   },
-  "idf.port": "/dev/tty.usbmodem101",
-  "idf.flashType": "JTAG",
-  "idf.monitorPort": "/dev/tty.usbmodem101"
+  "idf.port": "COM4",
+  "idf.flashType": "UART",
+  "idf.monitorPort": "COM4",
+  "idf.currentSetup": "C:\\Users\\Adam\\esp\\v5.5.2\\esp-idf",
+  "idf.portWin": "COM4"
 }

@@ -2,9 +2,6 @@
 Build command: idf.py build
 flash command: idf.py flash
 serial port monitor: idf.py monitor
-
-flash works if you set flash port to what it needs to be and set target correctly
-after setting port and target using the extension commands, the idf.py commands should work
 */
 
 #include "freertos/FreeRTOS.h"
@@ -42,7 +39,7 @@ void app_main(void)
     adc_oneshot_unit_init_cfg_t unit2_cfg = { .unit_id = ADC_UNIT_2 };
     adc_oneshot_new_unit(&unit2_cfg, &adc2_handle);
 
-    // --- ADC_UNIT_1: EC sensor (GPIO6) ---
+    // --- ADC_UNIT_1: EC sensor (GPIO6) + turbidity (GPIO4) ---
     adc_oneshot_unit_handle_t adc1_handle;
     adc_oneshot_unit_init_cfg_t unit1_cfg = { .unit_id = ADC_UNIT_1 };
     adc_oneshot_new_unit(&unit1_cfg, &adc1_handle);
@@ -72,12 +69,12 @@ void app_main(void)
 
     while (1) {
         // --- Thermistor ---
-        float tempC = 25.0f;  // default used for EC compensation if read fails
+        float tempC = 25.0f;
         esp_err_t temp_ret = thermistor_read(&tempC);
         if (temp_ret == ESP_OK) {
             float tempF = tempC * (9.0f / 5.0f) + 32.0f;
             ESP_LOGI(TAG, "Temp: %.2f F", tempF);
-            can_bus_send_float(CAN_ID_TEMPERATURE, tempF);
+            can_bus_send_float(CAN_ID_TEMPERATURE, tempC);
         } else if (temp_ret != ESP_ERR_INVALID_RESPONSE) {
             ESP_LOGE(TAG, "Thermistor read failed: %s", esp_err_to_name(temp_ret));
         }
@@ -92,9 +89,9 @@ void app_main(void)
             ESP_LOGE(TAG, "pH read failed: %s", esp_err_to_name(ph_ret));
         }
 
-        // --- EC (uses live temperature for compensation) ---
+        // --- EC ---
         float ecValue = 0.0f, ecVoltage = 0.0f;
-        esp_err_t ec_ret = ec_sensor_read(25.0f, &ecValue, &ecVoltage);
+        esp_err_t ec_ret = ec_sensor_read(tempC, &ecValue, &ecVoltage);
         if (ec_ret == ESP_OK) {
             ESP_LOGI(TAG, "EC:   %.2f ms/cm | %.1f mV", ecValue, ecVoltage);
             can_bus_send_float(CAN_ID_EC, ecValue);
@@ -116,9 +113,8 @@ void app_main(void)
         float sonarMm = 0.0f;
         esp_err_t sonar_ret = sonar_sensor_read(&sonarMm);
         if (sonar_ret == ESP_OK) {
-            float sonarIn = sonarMm / 25.4f;
-            ESP_LOGI(TAG, "Sonar: %.0f mm (%.2f in)", sonarMm, sonarIn);
-            can_bus_send_float(CAN_ID_SONAR, sonarIn);
+            ESP_LOGI(TAG, "Sonar: %.0f mm", sonarMm);
+            can_bus_send_float(CAN_ID_SONAR, sonarMm);
         } else {
             ESP_LOGE(TAG, "Sonar read failed: %s", esp_err_to_name(sonar_ret));
         }

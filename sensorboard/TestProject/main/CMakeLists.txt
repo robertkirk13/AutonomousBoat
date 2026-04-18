@@ -1,2 +1,10 @@
-idf_component_register(SRCS "main.c"
-                    INCLUDE_DIRS ".")
+idf_component_register(SRCS "web_server.c" "wifi_ap.c" "sensor_data.c" "sonar_sensor.c" "main.c"
+                            "thermistor.c"
+                            "ph_sensor.c"
+                            "ec_sensor.c"
+                            "dfrobot_ec.c"
+                            "turbidity_sensor.c"
+                            "can_bus.c"
+                    INCLUDE_DIRS "."
+                    EMBED_TXTFILES "web_page.html"
+                    REQUIRES esp_wifi esp_http_server esp_netif esp_event nvs_flash esp_adc driver)
