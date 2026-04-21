@@ -1,17 +1,23 @@
-//! Motor output task: reads MotorCommand from nav/teleop and sends CAN frames.
-//! Teleop commands take priority over autopilot commands.
+//! Motor output task: resolves nav/teleop motor commands and sends them to
+//! the hardware PWM ESC outputs. CAN motor frames are still mirrored when the
+//! bus is available, but they are no longer the only motor path.
 
 use crate::config::{
-    AUTOPILOT_COMMAND_TIMEOUT,
-    CAN_TX_ID,
-    MOTOR_OUTPUT_INTERVAL,
-    TELEOP_COMMAND_TIMEOUT,
+    AUTOPILOT_COMMAND_TIMEOUT, CAN_MOTOR_TX_ID, ESC_PWM_MAX_US, ESC_PWM_MIN_US, ESC_PWM_NEUTRAL_US,
+    MOTOR_OUTPUT_INTERVAL, TELEOP_COMMAND_TIMEOUT,
 };
 use crate::tasks::can::CanTxRequest;
 use crate::types::{CanState, MotorCommand};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
+
+#[cfg(feature = "hw")]
+use crate::config::{
+    ESC_BRINGUP_NEUTRAL_TIME, ESC_PWM_FREQUENCY_HZ, LEFT_ESC_GPIO, RIGHT_ESC_GPIO,
+};
+#[cfg(feature = "hw")]
+use rppal::pwm::{Channel, Polarity, Pwm};
 
 /// Encode motor command as a 4-byte CAN payload: [left_hi, left_lo, right_hi, right_lo]
 /// where each value is a signed i16 in range -10000..10000 representing -1.0..1.0 thrust.
@@ -20,12 +26,7 @@ fn encode_motor(cmd: &MotorCommand) -> Vec<u8> {
     let right = (cmd.right.clamp(-1.0, 1.0) * 10000.0).round() as i16;
     let left = left.to_be_bytes();
     let right = right.to_be_bytes();
-    vec![
-        left[0],
-        left[1],
-        right[0],
-        right[1],
-    ]
+    vec![left[0], left[1], right[0], right[1]]
 }
 
 fn command_is_nonzero(cmd: &MotorCommand) -> bool {
@@ -56,6 +57,60 @@ fn resolve_command(
     }
 }
 
+fn thrust_to_pulse_width_us(thrust: f64) -> u64 {
+    let half_range = (ESC_PWM_MAX_US - ESC_PWM_MIN_US) as f64 / 2.0;
+    (ESC_PWM_NEUTRAL_US as f64 + thrust.clamp(-1.0, 1.0) * half_range).round() as u64
+}
+
+#[cfg(feature = "hw")]
+struct EscOutput {
+    label: &'static str,
+    gpio: u8,
+    pwm: Pwm,
+}
+
+#[cfg(feature = "hw")]
+impl EscOutput {
+    fn new(channel: Channel, label: &'static str, gpio: u8) -> Result<Self, rppal::pwm::Error> {
+        let pwm = Pwm::with_period(
+            channel,
+            Duration::from_secs_f64(1.0 / ESC_PWM_FREQUENCY_HZ),
+            Duration::from_micros(ESC_PWM_NEUTRAL_US),
+            Polarity::Normal,
+            true,
+        )?;
+
+        Ok(Self { label, gpio, pwm })
+    }
+
+    fn set_thrust(&mut self, thrust: f64) -> Result<(), rppal::pwm::Error> {
+        self.pwm
+            .set_pulse_width(Duration::from_micros(thrust_to_pulse_width_us(thrust)))
+    }
+}
+
+#[cfg(feature = "hw")]
+struct PwmEscOutputs {
+    left: EscOutput,
+    right: EscOutput,
+}
+
+#[cfg(feature = "hw")]
+impl PwmEscOutputs {
+    fn new() -> Result<Self, rppal::pwm::Error> {
+        Ok(Self {
+            left: EscOutput::new(Channel::Pwm0, "left", LEFT_ESC_GPIO)?,
+            right: EscOutput::new(Channel::Pwm1, "right", RIGHT_ESC_GPIO)?,
+        })
+    }
+
+    fn write(&mut self, cmd: &MotorCommand) -> Result<(), rppal::pwm::Error> {
+        self.left.set_thrust(cmd.left)?;
+        self.right.set_thrust(cmd.right)?;
+        Ok(())
+    }
+}
+
 pub async fn run(
     motor_rx: watch::Receiver<MotorCommand>,
     teleop_rx: watch::Receiver<MotorCommand>,
@@ -74,6 +129,46 @@ pub async fn run(
     let mut teleop_cmd = teleop_rx.borrow().clone();
     let mut teleop_updated_at = None;
     let mut teleop_timeout_reported = false;
+
+    #[cfg(feature = "hw")]
+    let mut pwm_outputs = match PwmEscOutputs::new() {
+        Ok(mut outputs) => {
+            tracing::info!(
+                "PWM ESC outputs ready: {} ESC on GPIO{} (PWM0), {} ESC on GPIO{} (PWM1)",
+                outputs.left.label,
+                outputs.left.gpio,
+                outputs.right.label,
+                outputs.right.gpio,
+            );
+            if let Err(e) = outputs.write(&MotorCommand::default()) {
+                tracing::warn!("Failed to send neutral PWM during ESC bringup: {e}");
+                None
+            } else {
+                tracing::info!(
+                    "Holding 1.5 ms neutral PWM for {:?} to arm bidirectional ESCs",
+                    ESC_BRINGUP_NEUTRAL_TIME
+                );
+                let cancelled = tokio::select! {
+                    _ = cancel.cancelled() => true,
+                    _ = tokio::time::sleep(ESC_BRINGUP_NEUTRAL_TIME) => false,
+                };
+                if cancelled {
+                    let _ = outputs.write(&MotorCommand::default());
+                    tracing::info!("Motor output task stopped during ESC bringup");
+                    return;
+                }
+                Some(outputs)
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "PWM ESC outputs unavailable: {e}. Enable PWM0/PWM1 and route them to GPIO{} / GPIO{}.",
+                LEFT_ESC_GPIO,
+                RIGHT_ESC_GPIO,
+            );
+            None
+        }
+    };
 
     loop {
         tokio::select! {
@@ -112,24 +207,42 @@ pub async fn run(
             now,
         );
 
-        if !can_state_rx.borrow().connected {
-            continue;
+        #[cfg(feature = "hw")]
+        {
+            let mut pwm_failed = false;
+            if let Some(outputs) = pwm_outputs.as_mut() {
+                if let Err(e) = outputs.write(&cmd) {
+                    tracing::warn!("PWM ESC write failed: {e}");
+                    pwm_failed = true;
+                }
+            }
+            if pwm_failed {
+                pwm_outputs = None;
+            }
         }
 
-        let data = encode_motor(&cmd);
-        if let Err(e) = can_tx.try_send(CanTxRequest {
-            id: CAN_TX_ID,
-            data,
-        }) {
-            tracing::debug!("Motor CAN TX send failed: {e}");
+        if can_state_rx.borrow().connected {
+            let data = encode_motor(&cmd);
+            if let Err(e) = can_tx.try_send(CanTxRequest {
+                id: CAN_MOTOR_TX_ID,
+                data,
+            }) {
+                tracing::debug!("Motor CAN TX send failed: {e}");
+            }
         }
     }
 
-    // Stop motors on shutdown
+    #[cfg(feature = "hw")]
+    if let Some(outputs) = pwm_outputs.as_mut() {
+        let _ = outputs.write(&MotorCommand::default());
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    // Stop CAN mirror on shutdown
     let data = encode_motor(&MotorCommand::default());
     if can_state_rx.borrow().connected {
         let _ = can_tx.try_send(CanTxRequest {
-            id: CAN_TX_ID,
+            id: CAN_MOTOR_TX_ID,
             data,
         });
     }
@@ -161,7 +274,7 @@ mod tests {
                 left: 0.7,
                 right: 0.7,
             },
-            Some(now - TELEOP_COMMAND_TIMEOUT - std::time::Duration::from_millis(1)),
+            Some(now - TELEOP_COMMAND_TIMEOUT - Duration::from_millis(1)),
             now,
         );
 
@@ -192,5 +305,13 @@ mod tests {
                 right: 0.2,
             }
         );
+    }
+
+    #[test]
+    fn thrust_maps_to_standard_bidirectional_pwm() {
+        assert_eq!(thrust_to_pulse_width_us(-1.0), 1_000);
+        assert_eq!(thrust_to_pulse_width_us(0.0), 1_500);
+        assert_eq!(thrust_to_pulse_width_us(0.5), 1_750);
+        assert_eq!(thrust_to_pulse_width_us(1.0), 2_000);
     }
 }

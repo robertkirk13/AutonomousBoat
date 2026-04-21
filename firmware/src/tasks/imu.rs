@@ -2,14 +2,11 @@ use crate::bus::I2cBus;
 use crate::config::{BNO055_ADDR, IMU_INTERVAL};
 use crate::drivers::bno055::Bno055;
 use crate::types::ImuData;
+use std::time::Instant;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-pub async fn run(
-    bus: I2cBus,
-    tx: watch::Sender<Option<ImuData>>,
-    cancel: CancellationToken,
-) {
+pub async fn run(bus: I2cBus, tx: watch::Sender<Option<ImuData>>, cancel: CancellationToken) {
     let imu = Bno055::new(bus, BNO055_ADDR);
 
     // Retry setup — I2C may not be ready immediately on boot
@@ -36,7 +33,8 @@ pub async fn run(
         }
 
         match imu.read_imu().await {
-            Ok(data) => {
+            Ok(mut data) => {
+                data.timestamp = Some(Instant::now());
                 let _ = tx.send(Some(data));
             }
             Err(e) => {

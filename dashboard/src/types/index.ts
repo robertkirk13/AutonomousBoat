@@ -74,13 +74,24 @@ export interface ThermalData {
 }
 
 export interface NavData {
-  mode: 'idle' | 'running' | 'completed';
+  mode: 'idle' | 'holding' | 'running' | 'completed';
   target_wp: number;
   total_wps: number;
   distance_m: number;
   bearing_deg: number;
   left_thrust: number;
   right_thrust: number;
+}
+
+export interface PayloadData {
+  connected: boolean;
+  rx_count: number;
+  last_frame_id: number | null;
+  temperature_f: number | null;
+  ph: number | null;
+  ec_ms_cm: number | null;
+  turbidity_ntu: number | null;
+  sonar_in: number | null;
 }
 
 export interface StatusData {
@@ -99,6 +110,7 @@ export interface BoatState {
   power: PowerData | null;
   thermal: ThermalData | null;
   nav: NavData | null;
+  payload: PayloadData | null;
   uptime: number;
   mqttConnected: boolean;
   boatOnline: boolean;

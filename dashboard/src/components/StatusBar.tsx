@@ -62,7 +62,7 @@ export default function StatusBar() {
               </div>
             </div>
 
-            {boat.nav && boat.nav.mode === 'running' && (
+            {boat.nav && (boat.nav.mode === 'running' || boat.nav.mode === 'holding') && (
               <div className="text-right">
                 <div className="text-white/30 text-[10px] uppercase tracking-wider">Distance</div>
                 <div className="text-white/80 font-medium text-sm">{boat.nav.distance_m.toFixed(0)}m</div>

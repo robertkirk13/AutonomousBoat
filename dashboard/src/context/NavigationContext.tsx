@@ -23,6 +23,8 @@ interface NavigationContextType {
   controlMode: ControlMode;
   setControlMode: (mode: ControlMode) => void;
   sendTeleop: (left: number, right: number) => void;
+  adjustGpsOffset: (deltaLat: number, deltaLng: number) => void;
+  clearGpsOffset: () => void;
   calibrateUpright: () => void;
   calibrateCompass: () => void;
   rebootPi: () => void;
@@ -245,6 +247,18 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
     publish('boat/motor/set', { left, right });
   }, [publish]);
 
+  const adjustGpsOffset = useCallback((deltaLat: number, deltaLng: number) => {
+    publish('boat/command', {
+      action: 'gps_adjust_offset',
+      delta_lat: deltaLat,
+      delta_lon: deltaLng,
+    });
+  }, [publish]);
+
+  const clearGpsOffset = useCallback(() => {
+    publish('boat/command', { action: 'gps_clear_offset' });
+  }, [publish]);
+
   const addPolygonVertex = useCallback((lat: number, lng: number) => {
     setAreaCoverage((prev) => ({
       ...prev,
@@ -380,7 +394,7 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
         currentWaypointIndex: -1,
         waypoints: prev.waypoints.map((wp) => ({ ...wp, completed: true })),
       }));
-    } else if (mode === 'running') {
+    } else if (mode === 'running' || mode === 'holding') {
       setMission((prev) => ({
         ...prev,
         currentWaypointIndex: target_wp,
@@ -415,6 +429,8 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
         controlMode,
         setControlMode,
         sendTeleop,
+        adjustGpsOffset,
+        clearGpsOffset,
         calibrateUpright,
         calibrateCompass,
         rebootPi,

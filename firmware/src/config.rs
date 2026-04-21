@@ -21,10 +21,7 @@ pub const INA228_CHANNELS: &[(u16, &str)] = &[
 ];
 
 // TMP1075 addresses and labels
-pub const TMP1075_CHANNELS: &[(u16, &str)] = &[
-    (0x4A, "board_temp_1"),
-    (0x4B, "board_temp_2"),
-];
+pub const TMP1075_CHANNELS: &[(u16, &str)] = &[(0x4A, "board_temp_1"), (0x4B, "board_temp_2")];
 
 // INA228 calibration
 pub const R_SHUNT: f64 = 0.001; // 1 mΩ
@@ -37,6 +34,7 @@ pub const POWER_INTERVAL: Duration = Duration::from_secs(1); // 1Hz
 pub const THERMAL_INTERVAL: Duration = Duration::from_secs(2); // 0.5Hz
 pub const MQTT_IMU_INTERVAL: Duration = Duration::from_secs(1); // 1Hz (dashboard interpolates)
 pub const MQTT_STATUS_INTERVAL: Duration = Duration::from_secs(10);
+pub const PAYLOAD_SENSOR_TIMEOUT: Duration = Duration::from_secs(2);
 
 // Fan control (GPIO18)
 pub const FAN_GPIO: u8 = 18;
@@ -50,6 +48,7 @@ pub const TOPIC_THERMAL: &str = "boat/thermal";
 pub const TOPIC_STATUS: &str = "boat/status";
 pub const TOPIC_GPS: &str = "boat/gps";
 pub const TOPIC_NAV: &str = "boat/nav";
+pub const TOPIC_PAYLOAD: &str = "boat/payload";
 
 // MQTT topics (subscribe)
 pub const TOPIC_MISSION_SET: &str = "boat/mission/set";
@@ -58,20 +57,35 @@ pub const TOPIC_COMMAND: &str = "boat/command";
 
 // Navigation
 pub const NAV_INTERVAL: Duration = Duration::from_millis(200); // 5Hz
-pub const GPS_INTERVAL: Duration = Duration::from_secs(1);     // 1Hz publish
-pub const WAYPOINT_REACHED_M: f64 = 3.0;                       // meters
+pub const GPS_INTERVAL: Duration = Duration::from_secs(1); // 1Hz publish
+pub const WAYPOINT_REACHED_M: f64 = 3.0; // meters
 pub const MAX_SPEED_MPS: f64 = 2.0;
+pub const GPS_STALE_TIMEOUT: Duration = Duration::from_secs(3);
+pub const IMU_STALE_TIMEOUT: Duration = Duration::from_millis(500);
 
 // Motor output / command freshness
 pub const MOTOR_OUTPUT_INTERVAL: Duration = Duration::from_millis(50); // 20Hz
 pub const TELEOP_COMMAND_TIMEOUT: Duration = Duration::from_millis(400);
 pub const AUTOPILOT_COMMAND_TIMEOUT: Duration = Duration::from_millis(750);
+pub const ESC_PWM_FREQUENCY_HZ: f64 = 50.0;
+pub const ESC_PWM_MIN_US: u64 = 1_000;
+pub const ESC_PWM_NEUTRAL_US: u64 = 1_500;
+pub const ESC_PWM_MAX_US: u64 = 2_000;
+pub const ESC_BRINGUP_NEUTRAL_TIME: Duration = Duration::from_secs(3);
+pub const LEFT_ESC_GPIO: u8 = 12;
+pub const RIGHT_ESC_GPIO: u8 = 13;
 
 // MCP2515 CAN controller (SPI bus 0, CE0, 16MHz crystal)
 pub const CAN_SPI_DEV: &str = "/dev/spidev0.0";
 pub const CAN_SPI_SPEED_HZ: u32 = 1_000_000;
 pub const CAN_POLL_INTERVAL: Duration = Duration::from_millis(1);
-pub const CAN_TX_ID: u16 = 0x100;
+// Reserve 0x100-0x104 for the sensor payload board's outbound telemetry.
+pub const CAN_MOTOR_TX_ID: u16 = 0x200;
+pub const CAN_ID_PAYLOAD_TEMPERATURE_F: u16 = 0x100;
+pub const CAN_ID_PAYLOAD_PH: u16 = 0x101;
+pub const CAN_ID_PAYLOAD_EC_MS_CM: u16 = 0x102;
+pub const CAN_ID_PAYLOAD_TURBIDITY_NTU: u16 = 0x103;
+pub const CAN_ID_PAYLOAD_SONAR_IN: u16 = 0x104;
 
 // MQTT CAN topic
 pub const TOPIC_CAN: &str = "boat/can";

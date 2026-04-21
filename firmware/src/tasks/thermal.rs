@@ -1,5 +1,5 @@
 use crate::bus::I2cBus;
-use crate::config::{FAN_TEMP_MAX, FAN_TEMP_MIN, TMP1075_CHANNELS, THERMAL_INTERVAL};
+use crate::config::{FAN_TEMP_MAX, FAN_TEMP_MIN, THERMAL_INTERVAL, TMP1075_CHANNELS};
 use crate::drivers::tmp1075::Tmp1075;
 use crate::types::{TempReading, ThermalState};
 use tokio::sync::watch;

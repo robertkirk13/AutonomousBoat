@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import mqtt from 'mqtt';
-import type { ImuData, GpsData, PowerData, ThermalData, NavData, BoatState } from '../types/index';
+import type {
+  ImuData,
+  GpsData,
+  PowerData,
+  ThermalData,
+  NavData,
+  PayloadData,
+  BoatState,
+} from '../types/index';
 
 const HEARTBEAT_TIMEOUT = 20_000;
 
@@ -14,6 +22,7 @@ const DEFAULT_BOAT_STATE: BoatState = {
   power: null,
   thermal: null,
   nav: null,
+  payload: null,
   uptime: 0,
   mqttConnected: false,
   boatOnline: false,
@@ -131,6 +140,25 @@ function lerpThermal(a: ThermalData, b: ThermalData, t: number): ThermalData {
   };
 }
 
+function lerpNullable(a: number | null, b: number | null, t: number): number | null {
+  if (a == null) return b;
+  if (b == null) return a;
+  return lerp(a, b, t);
+}
+
+function lerpPayload(a: PayloadData, b: PayloadData, t: number): PayloadData {
+  return {
+    connected: b.connected,
+    rx_count: Math.round(lerp(a.rx_count, b.rx_count, t)),
+    last_frame_id: b.last_frame_id,
+    temperature_f: lerpNullable(a.temperature_f, b.temperature_f, t),
+    ph: lerpNullable(a.ph, b.ph, t),
+    ec_ms_cm: lerpNullable(a.ec_ms_cm, b.ec_ms_cm, t),
+    turbidity_ntu: lerpNullable(a.turbidity_ntu, b.turbidity_ntu, t),
+    sonar_in: lerpNullable(a.sonar_in, b.sonar_in, t),
+  };
+}
+
 interface Snapshot<T> {
   data: T;
   time: number;
@@ -170,6 +198,7 @@ export function useBoatMqtt() {
   const powerChannel = useRef(createChannel<PowerData>());
   const thermalChannel = useRef(createChannel<ThermalData>());
   const navChannel = useRef(createChannel<NavData>());
+  const payloadChannel = useRef(createChannel<PayloadData>());
 
   // Connection state doesn't need interpolation — store in refs updated immediately
   const connState = useRef({ mqttConnected: false, boatOnline: false });
@@ -198,7 +227,7 @@ export function useBoatMqtt() {
   const publish = useCallback((topic: string, payload: unknown) => {
     const client = clientRef.current;
     if (client?.connected) {
-      const qos = topic === 'boat/motor/set' || topic === 'boat/mission/set' ? 1 : 0;
+      const qos = topic === 'boat/motor/set' || topic === 'boat/mission/set' || topic === 'boat/command' ? 1 : 0;
       client.publish(topic, JSON.stringify(payload), { qos });
     }
   }, []);
@@ -261,6 +290,9 @@ export function useBoatMqtt() {
           case 'boat/nav':
             navChannel.current.push(data as NavData);
             break;
+          case 'boat/payload':
+            payloadChannel.current.push(data as PayloadData);
+            break;
           case 'boat/status':
             statusClockRef.current = {
               uptimeSecs: data.uptime_secs ?? 0,
@@ -290,6 +322,7 @@ export function useBoatMqtt() {
       const power = powerChannel.current.sample();
       const thermal = thermalChannel.current.sample();
       const nav = navChannel.current.sample();
+      const payload = payloadChannel.current.sample();
 
       // Interpolate IMU (euler for display, quaternion for 3D — no gimbal lock)
       let heading = 0, roll = 0, pitch = 0;
@@ -370,6 +403,15 @@ export function useBoatMqtt() {
         }
       }
 
+      let payloadVal: PayloadData | null = null;
+      if (payload) {
+        if ('t' in payload) {
+          payloadVal = lerpPayload(payload.prev, payload.curr, payload.t);
+        } else {
+          payloadVal = payload.latest;
+        }
+      }
+
       // Advance uptime locally between status packets so the UI keeps ticking.
       let uptimeVal = 0;
       if (statusClockRef.current) {
@@ -389,6 +431,7 @@ export function useBoatMqtt() {
         power: powerVal,
         thermal: thermalVal,
         nav: navVal,
+        payload: payloadVal,
         uptime: uptimeVal,
         mqttConnected: connState.current.mqttConnected,
         boatOnline: connState.current.boatOnline,

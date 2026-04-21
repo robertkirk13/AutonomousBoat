@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import * as Popover from '@radix-ui/react-popover';
 import { useNavigation } from '../context/NavigationContext';
 import { MEASUREMENT_CONFIGS } from '../types/index';
 import type { Waypoint } from '../types/index';
@@ -38,33 +39,85 @@ const KEY_MAP: Record<string, Direction> = {
 function TeleopControls() {
   const { sendTeleop } = useNavigation();
   const [speed, setSpeed] = useState(70);
+  const [directControlArmed, setDirectControlArmed] = useState(false);
+  const [directLeft, setDirectLeft] = useState(0);
+  const [directRight, setDirectRight] = useState(0);
   const activeKeys = useRef(new Set<Direction>());
   const activeTouch = useRef(new Set<Direction>());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const speedRef = useRef(speed);
+  const directControlRef = useRef(directControlArmed);
+  const directLeftRef = useRef(directLeft);
+  const directRightRef = useRef(directRight);
   speedRef.current = speed;
+  directControlRef.current = directControlArmed;
+  directLeftRef.current = directLeft;
+  directRightRef.current = directRight;
 
-  const sendCurrent = useCallback(() => {
+  const clearDirectionalInput = useCallback(() => {
+    activeKeys.current.clear();
+    activeTouch.current.clear();
+  }, []);
+
+  const resolveCommand = useCallback(() => {
+    if (directControlRef.current) {
+      return {
+        left: directLeftRef.current,
+        right: directRightRef.current,
+      };
+    }
+
     const merged = new Set([...activeKeys.current, ...activeTouch.current]);
     const { left, right } = dirToMotor(merged);
     const scale = speedRef.current / 100;
-    sendTeleop(left * scale, right * scale);
-  }, [sendTeleop]);
+    return {
+      left: left * scale,
+      right: right * scale,
+    };
+  }, []);
+
+  const sendCurrent = useCallback(() => {
+    const { left, right } = resolveCommand();
+    sendTeleop(left, right);
+  }, [resolveCommand, sendTeleop]);
 
   const updateLoop = useCallback(() => {
-    const hasInput = activeKeys.current.size > 0 || activeTouch.current.size > 0;
-    if (hasInput && !intervalRef.current) {
+    const hasDirectionalInput = activeKeys.current.size > 0 || activeTouch.current.size > 0;
+    const needsHeartbeat = directControlRef.current || hasDirectionalInput;
+    if (needsHeartbeat && !intervalRef.current) {
       sendCurrent();
       intervalRef.current = setInterval(sendCurrent, 1000 / SEND_HZ);
-    } else if (!hasInput && intervalRef.current) {
+    } else if (!needsHeartbeat && intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
       sendTeleop(0, 0);
     }
   }, [sendCurrent, sendTeleop]);
 
+  const stopAll = useCallback(() => {
+    clearDirectionalInput();
+    setDirectLeft(0);
+    setDirectRight(0);
+    setDirectControlArmed(false);
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    sendTeleop(0, 0);
+  }, [clearDirectionalInput, sendTeleop]);
+
+  const setDirectMode = useCallback((armed: boolean) => {
+    clearDirectionalInput();
+    setDirectControlArmed(armed);
+    if (!armed) {
+      setDirectLeft(0);
+      setDirectRight(0);
+    }
+  }, [clearDirectionalInput]);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (directControlRef.current) return;
       const dir = KEY_MAP[e.key.toLowerCase()];
       if (!dir) return;
       e.preventDefault();
@@ -82,35 +135,154 @@ function TeleopControls() {
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
-      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
-      activeKeys.current.clear();
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      clearDirectionalInput();
+      sendTeleop(0, 0);
     };
-  }, [updateLoop]);
+  }, [clearDirectionalInput, sendTeleop, updateLoop]);
 
-  const touchStart = (dir: Direction) => { activeTouch.current.add(dir); updateLoop(); };
-  const touchEnd = (dir: Direction) => { activeTouch.current.delete(dir); updateLoop(); };
+  useEffect(() => {
+    if (directControlArmed) {
+      sendCurrent();
+    }
+    updateLoop();
+  }, [directControlArmed, directLeft, directRight, sendCurrent, updateLoop]);
+
+  const touchStart = (dir: Direction) => {
+    if (directControlRef.current) return;
+    activeTouch.current.add(dir);
+    updateLoop();
+  };
+  const touchEnd = (dir: Direction) => {
+    activeTouch.current.delete(dir);
+    updateLoop();
+  };
 
   return (
     <div className="px-3.5 py-3 space-y-4">
       {/* Speed control */}
       <div>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[9px] font-medium text-white/25 uppercase tracking-[0.1em]">Speed</span>
-          <span className="text-xs font-mono text-amber-400/80 tabular-nums">{speed}%</span>
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div>
+            <span className="text-[9px] font-medium text-white/25 uppercase tracking-[0.1em]">Speed</span>
+            <div className="text-[10px] text-white/20 mt-1">
+              {directControlArmed ? 'Direct motor mix overrides the D-pad' : 'Keyboard and touch steering mix'}
+            </div>
+          </div>
+          <Popover.Root>
+            <Popover.Trigger asChild>
+              <button
+                type="button"
+                className={`shrink-0 rounded-xl border px-2.5 py-2 text-[10px] font-medium transition-colors ${
+                  directControlArmed
+                    ? 'border-amber-400/35 bg-amber-500/12 text-amber-300'
+                    : 'border-white/[0.08] bg-white/[0.04] text-white/55 hover:bg-white/[0.07] hover:text-white/75'
+                }`}
+              >
+                Direct Mix
+              </button>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
+                side="top"
+                align="end"
+                sideOffset={10}
+                className="w-[18rem] rounded-2xl border border-white/[0.08] bg-[#171922]/95 p-3 shadow-2xl shadow-black/50 backdrop-blur-xl z-[10000]"
+              >
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <div className="text-[11px] font-semibold tracking-wide text-white/80">Direct Motor Mix</div>
+                    <div className="text-[10px] text-white/35 mt-1">
+                      Sends left and right throttle directly. Use this for ESC bringup, trim, and bench checks.
+                    </div>
+                  </div>
+                  <div className={`mt-0.5 rounded-full px-2 py-1 text-[9px] font-medium uppercase tracking-[0.14em] ${
+                    directControlArmed ? 'bg-amber-500/12 text-amber-300' : 'bg-white/[0.05] text-white/30'
+                  }`}>
+                    {directControlArmed ? 'Live' : 'Idle'}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setDirectMode(!directControlArmed)}
+                  className={`w-full rounded-xl px-3 py-2 text-[11px] font-semibold transition-colors ${
+                    directControlArmed
+                      ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/22'
+                      : 'bg-white/[0.05] text-white/70 hover:bg-white/[0.08]'
+                  }`}
+                >
+                  {directControlArmed ? 'Release Direct Control' : 'Arm Direct Control'}
+                </button>
+
+                <div className={`mt-3 space-y-3 transition-opacity ${directControlArmed ? 'opacity-100' : 'opacity-45'}`}>
+                  <DirectMotorSlider
+                    label="Left Motor"
+                    value={directLeft}
+                    accent="#f59e0b"
+                    disabled={!directControlArmed}
+                    onChange={setDirectLeft}
+                  />
+                  <DirectMotorSlider
+                    label="Right Motor"
+                    value={directRight}
+                    accent="#14b8a6"
+                    disabled={!directControlArmed}
+                    onChange={setDirectRight}
+                  />
+                </div>
+
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDirectLeft(0);
+                      setDirectRight(0);
+                      if (directControlArmed) {
+                        sendCurrent();
+                      }
+                    }}
+                    className="flex-1 rounded-xl bg-white/[0.05] px-3 py-2 text-[10px] font-medium text-white/65 hover:bg-white/[0.08] hover:text-white/80 transition-colors"
+                  >
+                    Center
+                  </button>
+                  <button
+                    type="button"
+                    onClick={stopAll}
+                    className="flex-1 rounded-xl bg-red-500/14 px-3 py-2 text-[10px] font-semibold text-red-300 hover:bg-red-500/20 transition-colors"
+                  >
+                    Stop
+                  </button>
+                </div>
+
+                <Popover.Arrow className="fill-[#171922]" />
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
         </div>
-        <input
-          type="range"
-          min="10"
-          max="100"
-          step="10"
-          value={speed}
-          onChange={e => setSpeed(Number(e.target.value))}
-          className="w-full h-1.5 appearance-none bg-white/[0.06] rounded-full"
-          style={{ accentColor: '#f59e0b' }}
-        />
-        <div className="flex justify-between mt-1 text-[9px] font-mono text-white/15">
-          <span>10%</span>
-          <span>100%</span>
+        <div className={directControlArmed ? 'opacity-40' : ''}>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[9px] font-medium text-white/25 uppercase tracking-[0.1em]">D-Pad Scale</span>
+            <span className="text-xs font-mono text-amber-400/80 tabular-nums">{speed}%</span>
+          </div>
+          <input
+            type="range"
+            min="10"
+            max="100"
+            step="10"
+            value={speed}
+            disabled={directControlArmed}
+            onChange={e => setSpeed(Number(e.target.value))}
+            className="w-full h-1.5 appearance-none bg-white/[0.06] rounded-full disabled:cursor-not-allowed"
+            style={{ accentColor: '#f59e0b' }}
+          />
+          <div className="flex justify-between mt-1 text-[9px] font-mono text-white/15">
+            <span>10%</span>
+            <span>100%</span>
+          </div>
         </div>
       </div>
 
@@ -118,33 +290,36 @@ function TeleopControls() {
       <div>
         <div className="flex items-center justify-between mb-2">
           <span className="text-[9px] font-medium text-white/25 uppercase tracking-[0.1em]">Direction</span>
-          <span className="text-[9px] font-mono text-white/20">WASD</span>
+          <span className="text-[9px] font-mono text-white/20">{directControlArmed ? 'Paused' : 'WASD'}</span>
         </div>
-        <div className="flex flex-col items-center gap-1">
-          <DPadButton dir="forward" label="W" icon="up" onStart={touchStart} onEnd={touchEnd} />
+        <div className={`flex flex-col items-center gap-1 ${directControlArmed ? 'opacity-40' : ''}`}>
+          <DPadButton dir="forward" label="W" icon="up" disabled={directControlArmed} onStart={touchStart} onEnd={touchEnd} />
           <div className="flex gap-1">
-            <DPadButton dir="left" label="A" icon="left" onStart={touchStart} onEnd={touchEnd} />
+            <DPadButton dir="left" label="A" icon="left" disabled={directControlArmed} onStart={touchStart} onEnd={touchEnd} />
             <button
-              onMouseDown={() => { activeTouch.current.clear(); activeKeys.current.clear(); sendTeleop(0, 0); }}
+              type="button"
+              onMouseDown={stopAll}
+              onTouchStart={(e) => { e.preventDefault(); stopAll(); }}
               className="w-11 h-11 rounded-xl bg-red-500/15 hover:bg-red-500/25 active:bg-red-500/35 border border-red-500/25 flex items-center justify-center transition-colors"
             >
               <svg className="w-4 h-4 text-red-400/70" fill="currentColor" viewBox="0 0 24 24">
                 <rect x="6" y="6" width="12" height="12" rx="2" />
               </svg>
             </button>
-            <DPadButton dir="right" label="D" icon="right" onStart={touchStart} onEnd={touchEnd} />
+            <DPadButton dir="right" label="D" icon="right" disabled={directControlArmed} onStart={touchStart} onEnd={touchEnd} />
           </div>
-          <DPadButton dir="back" label="S" icon="down" onStart={touchStart} onEnd={touchEnd} />
+          <DPadButton dir="back" label="S" icon="down" disabled={directControlArmed} onStart={touchStart} onEnd={touchEnd} />
         </div>
       </div>
     </div>
   );
 }
 
-function DPadButton({ dir, label, icon, onStart, onEnd }: {
+function DPadButton({ dir, label, icon, disabled = false, onStart, onEnd }: {
   dir: Direction;
   label: string;
   icon: 'up' | 'down' | 'left' | 'right';
+  disabled?: boolean;
   onStart: (dir: Direction) => void;
   onEnd: (dir: Direction) => void;
 }) {
@@ -152,15 +327,20 @@ function DPadButton({ dir, label, icon, onStart, onEnd }: {
 
   return (
     <button
-      onMouseDown={() => onStart(dir)}
-      onMouseUp={() => onEnd(dir)}
-      onMouseLeave={() => onEnd(dir)}
-      onTouchStart={(e) => { e.preventDefault(); onStart(dir); }}
-      onTouchEnd={(e) => { e.preventDefault(); onEnd(dir); }}
-      className="w-11 h-11 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:bg-white/[0.14] border border-white/[0.06] flex flex-col items-center justify-center gap-0.5 transition-colors"
+      type="button"
+      onMouseDown={() => !disabled && onStart(dir)}
+      onMouseUp={() => !disabled && onEnd(dir)}
+      onMouseLeave={() => !disabled && onEnd(dir)}
+      onTouchStart={(e) => { e.preventDefault(); if (!disabled) onStart(dir); }}
+      onTouchEnd={(e) => { e.preventDefault(); if (!disabled) onEnd(dir); }}
+      className={`w-11 h-11 rounded-xl border flex flex-col items-center justify-center gap-0.5 transition-colors ${
+        disabled
+          ? 'bg-white/[0.02] border-white/[0.04] text-white/20 cursor-not-allowed'
+          : 'bg-white/[0.04] hover:bg-white/[0.08] active:bg-white/[0.14] border-white/[0.06]'
+      }`}
     >
       <svg
-        className="w-3.5 h-3.5 text-white/45"
+        className={`w-3.5 h-3.5 ${disabled ? 'text-white/20' : 'text-white/45'}`}
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -169,8 +349,50 @@ function DPadButton({ dir, label, icon, onStart, onEnd }: {
       >
         <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
       </svg>
-      <span className="text-[8px] font-mono text-white/20">{label}</span>
+      <span className={`text-[8px] font-mono ${disabled ? 'text-white/10' : 'text-white/20'}`}>{label}</span>
     </button>
+  );
+}
+
+function DirectMotorSlider({
+  label,
+  value,
+  accent,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  accent: string;
+  disabled: boolean;
+  onChange: (value: number) => void;
+}) {
+  const percent = Math.round(value * 100);
+  const text = `${percent > 0 ? '+' : ''}${percent}%`;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[10px] font-medium text-white/55">{label}</span>
+        <span className="text-[10px] font-mono text-white/70 tabular-nums">{text}</span>
+      </div>
+      <input
+        type="range"
+        min="-100"
+        max="100"
+        step="1"
+        value={percent}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value) / 100)}
+        className="w-full h-1.5 appearance-none bg-white/[0.06] rounded-full disabled:cursor-not-allowed"
+        style={{ accentColor: accent }}
+      />
+      <div className="mt-1 flex justify-between text-[9px] font-mono text-white/18">
+        <span>REV</span>
+        <span>NEUTRAL</span>
+        <span>FWD</span>
+      </div>
+    </div>
   );
 }
 
@@ -182,6 +404,10 @@ function MissionControls() {
   const completed = mission.waypoints.filter(wp => wp.completed).length;
   const total = mission.waypoints.length;
   const isActive = mission.status === 'running' || mission.status === 'paused';
+  const navHolding = boat.nav?.mode === 'holding';
+  const navProgress = boat.nav && (boat.nav.mode === 'running' || boat.nav.mode === 'holding')
+    ? boat.nav
+    : null;
 
   return (
     <div className="px-3.5 py-3">
@@ -191,10 +417,14 @@ function MissionControls() {
           <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-2">
               {mission.status === 'running' && (
-                <div className="w-1.5 h-1.5 rounded-full bg-teal animate-pulse" />
+                <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${navHolding ? 'bg-amber-400' : 'bg-teal'}`} />
               )}
               <span className="text-xs font-medium text-white/60">
-                {mission.status === 'running' ? 'Navigating' : 'Paused'}
+                {mission.status === 'paused'
+                  ? 'Paused'
+                  : navHolding
+                  ? 'Holding for Sensors'
+                  : 'Navigating'}
               </span>
             </div>
             <span className="text-xs font-mono text-white/40">{completed}/{total}</span>
@@ -205,9 +435,9 @@ function MissionControls() {
               style={{ width: total > 0 ? `${(completed / total) * 100}%` : '0%' }}
             />
           </div>
-          {boat.nav && boat.nav.mode === 'running' && (
+          {navProgress && (
             <div className="mt-1.5 text-[10px] font-mono text-white/30">
-              {boat.nav.distance_m.toFixed(0)}m to WP {boat.nav.target_wp + 1}
+              {navProgress.distance_m.toFixed(0)}m to WP {navProgress.target_wp + 1}
             </div>
           )}
         </div>

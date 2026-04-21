@@ -55,25 +55,20 @@ impl Ina228 {
     pub async fn read_all(&self) -> Result<Ina228Reading, I2cError> {
         // Bus voltage: 24-bit >> 4, * 195.3125e-6
         let vbus_data = self.bus.read_block(self.addr, REG_VBUS, 3).await?;
-        let vbus_raw = ((vbus_data[0] as u32) << 16
-            | (vbus_data[1] as u32) << 8
-            | vbus_data[2] as u32)
-            >> 4;
+        let vbus_raw =
+            ((vbus_data[0] as u32) << 16 | (vbus_data[1] as u32) << 8 | vbus_data[2] as u32) >> 4;
         let voltage_v = vbus_raw as f64 * 195.3125e-6;
 
         // Current: 24-bit >> 4, signed 20-bit
         let cur_data = self.bus.read_block(self.addr, REG_CURRENT, 3).await?;
-        let cur_raw = ((cur_data[0] as u32) << 16
-            | (cur_data[1] as u32) << 8
-            | cur_data[2] as u32)
-            >> 4;
+        let cur_raw =
+            ((cur_data[0] as u32) << 16 | (cur_data[1] as u32) << 8 | cur_data[2] as u32) >> 4;
         let cur_signed = sign_extend(cur_raw, 20);
         let current_a = cur_signed as f64 * CURRENT_LSB;
 
         // Power: 24-bit unsigned
         let pwr_data = self.bus.read_block(self.addr, REG_POWER, 3).await?;
-        let pwr_raw =
-            (pwr_data[0] as u32) << 16 | (pwr_data[1] as u32) << 8 | pwr_data[2] as u32;
+        let pwr_raw = (pwr_data[0] as u32) << 16 | (pwr_data[1] as u32) << 8 | pwr_data[2] as u32;
         let power_w = pwr_raw as f64 * 3.2 * CURRENT_LSB;
 
         // Energy: 40-bit unsigned

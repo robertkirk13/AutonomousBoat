@@ -26,6 +26,10 @@ function cardinalDir(deg: number): string {
   return dirs[Math.round(((deg % 360) + 360) % 360 / 45) % 8];
 }
 
+function formatCanId(id: number | null): string {
+  return id == null ? '--' : `0x${id.toString(16).toUpperCase().padStart(3, '0')}`;
+}
+
 /** Compact SVG compass ring with tick marks and heading needle. */
 function CompassRing({ heading }: { heading: number }) {
   const r = 32;
@@ -108,6 +112,7 @@ export default function TelemetryPanel() {
 
   const leftThrust = boat.nav?.left_thrust ?? 0;
   const rightThrust = boat.nav?.right_thrust ?? 0;
+  const payload = boat.payload;
 
   // Extract thermal readings by label
   const temp1 = boat.thermal?.temps.find((t) => t.label === 'board_temp_1');
@@ -160,7 +165,7 @@ export default function TelemetryPanel() {
         <div className="mt-1.5 text-[10px] font-mono text-white/40 tabular-nums text-center leading-relaxed">
           {boat.position.lat.toFixed(5)}, {boat.position.lng.toFixed(5)}
         </div>
-        {boat.nav && boat.nav.mode === 'running' && (
+        {boat.nav && (boat.nav.mode === 'running' || boat.nav.mode === 'holding') && (
           <div className="flex items-baseline gap-1.5 mt-1.5 pt-1.5 border-t border-white/[0.04] w-full justify-center">
             <span className="text-[9px] text-white/25 uppercase tracking-wider">To WP</span>
             <span className="text-[10px] font-mono text-teal/60 tabular-nums">
@@ -212,6 +217,36 @@ export default function TelemetryPanel() {
           </Section>
         </>
       )}
+
+      <div className="h-px bg-white/[0.04] mx-3" />
+      <Section
+        title="Payload"
+        accent={(
+          <span className={`text-[9px] font-medium uppercase tracking-[0.12em] ${
+            payload?.connected ? 'text-teal/70' : payload ? 'text-amber-300/70' : 'text-white/20'
+          }`}>
+            {payload?.connected ? 'CAN Live' : payload ? 'Stale' : 'Waiting'}
+          </span>
+        )}
+      >
+        {payload ? (
+          <>
+            <div className="space-y-2">
+              <PayloadMetric label="Temp" value={payload.temperature_f} unit="°F" min={32} max={100} precision={1} color="oklch(0.73 0.17 55)" />
+              <PayloadMetric label="pH" value={payload.ph} unit="pH" min={0} max={14} precision={2} color="oklch(0.74 0.13 160)" />
+              <PayloadMetric label="Conduct." value={payload.ec_ms_cm} unit="mS/cm" min={0} max={10} precision={2} color="oklch(0.74 0.15 250)" />
+              <PayloadMetric label="Turbid." value={payload.turbidity_ntu} unit="NTU" min={0} max={1000} precision={1} color="oklch(0.71 0.17 210)" />
+              <PayloadMetric label="Depth" value={payload.sonar_in} unit="in" min={0} max={120} precision={1} color="oklch(0.72 0.12 290)" />
+            </div>
+            <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/[0.04] text-[9px] font-mono text-white/25">
+              <span>{payload.rx_count} rx</span>
+              <span>{formatCanId(payload.last_frame_id)}</span>
+            </div>
+          </>
+        ) : (
+          <div className="text-center py-4 text-white/15 text-xs">Waiting for payload CAN</div>
+        )}
+      </Section>
 
       {/* Calibration dropdown */}
       <div className="mt-auto">
@@ -268,6 +303,48 @@ export default function TelemetryPanel() {
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function PayloadMetric({
+  label,
+  value,
+  unit,
+  min,
+  max,
+  precision,
+  color,
+}: {
+  label: string;
+  value: number | null;
+  unit: string;
+  min: number;
+  max: number;
+  precision: number;
+  color: string;
+}) {
+  const ratio = value == null ? 0 : Math.max(0, Math.min(1, (value - min) / (max - min)));
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1">
+        <span className="text-[10px] text-white/35 uppercase tracking-wider">{label}</span>
+        <span className={`text-sm font-mono tabular-nums ${value == null ? 'text-white/20' : 'text-white/85'}`}>
+          {value == null ? '--' : value.toFixed(precision)}
+          <span className="text-white/30 text-[9px] ml-0.5">{unit}</span>
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-white/[0.04] overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{
+            width: `${ratio * 100}%`,
+            backgroundColor: color,
+            opacity: value == null ? 0.12 : 0.75,
+          }}
+        />
       </div>
     </div>
   );

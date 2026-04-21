@@ -11,6 +11,8 @@ mod types;
 
 use bus::I2cBus;
 use std::time::Duration;
+#[cfg(feature = "sim")]
+use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use types::*;
@@ -61,16 +63,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (power_tx, power_rx) = watch::channel(PowerState::default());
     let (thermal_tx, thermal_rx) = watch::channel(ThermalState::default());
     let (gps_tx, gps_rx) = watch::channel(GpsPosition::default());
+    let (gps_offset_tx, gps_offset_rx) = watch::channel(GpsOffset::default());
     let (nav_tx, nav_rx) = watch::channel(NavState::default());
     let (mission_tx, mission_rx) = watch::channel(Mission::default());
     let (motor_tx, motor_rx) = watch::channel(MotorCommand::default());
     let (teleop_tx, teleop_rx) = watch::channel(MotorCommand::default());
     let (can_state_tx, can_state_rx) = watch::channel(CanState::default());
+    let (payload_tx, payload_rx) = watch::channel(PayloadSensorState::default());
 
     // CAN TX request channel (other tasks can send CAN frames)
     let (can_tx, can_tx_rx) = mpsc::channel::<tasks::can::CanTxRequest>(32);
     // CAN RX frame channel (received frames forwarded here)
-    let (can_frame_tx, _can_frame_rx) = mpsc::channel::<CanFrame>(64);
+    let (can_frame_tx, can_frame_rx) = mpsc::channel::<CanFrame>(64);
 
     // --- Fan GPIO (hw only) ---
     #[cfg(feature = "hw")]
@@ -92,17 +96,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fan: Option<tasks::thermal::FanControl> = None;
 
     // --- Spawn sensor tasks ---
-    let imu_handle = tokio::spawn(tasks::imu::run(
-        i2c_bus.clone(),
-        imu_tx,
-        cancel.clone(),
-    ));
+    let imu_handle = tokio::spawn(tasks::imu::run(i2c_bus.clone(), imu_tx, cancel.clone()));
 
-    let power_handle = tokio::spawn(tasks::power::run(
-        i2c_bus.clone(),
-        power_tx,
-        cancel.clone(),
-    ));
+    let power_handle = tokio::spawn(tasks::power::run(i2c_bus.clone(), power_tx, cancel.clone()));
 
     let thermal_handle = tokio::spawn(tasks::thermal::run(
         i2c_bus.clone(),
@@ -122,9 +118,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cancel.clone(),
     ));
 
+    let payload_handle = tokio::spawn(tasks::payload::run(
+        can_frame_rx,
+        payload_tx,
+        cancel.clone(),
+    ));
+
     // --- GPS (EG25-G via USB serial, hw only) ---
     #[cfg(feature = "hw")]
-    let gps_handle = tokio::spawn(tasks::gps::run(gps_tx, cancel.clone()));
+    let gps_handle = tokio::spawn(tasks::gps::run(
+        gps_tx,
+        gps_offset_rx.clone(),
+        cancel.clone(),
+    ));
 
     // --- Navigation autopilot ---
     let nav_handle = tokio::spawn(tasks::nav::run(
@@ -150,6 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "sim")]
     let sim_gps_handle = {
         let world = world.clone();
+        let gps_offset_rx = gps_offset_rx.clone();
         let cancel = cancel.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(50)); // 20Hz step
@@ -171,10 +178,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Publish GPS position
                 let (lat, lon, speed) = world.gps();
+                let offset = gps_offset_rx.borrow().clone();
                 let _ = gps_tx.send(GpsPosition {
-                    lat,
-                    lon,
+                    lat: lat + offset.lat,
+                    lon: lon + offset.lon,
                     speed_mps: speed,
+                    timestamp: Some(Instant::now()),
                 });
             }
         })
@@ -191,8 +200,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 thermal_rx,
                 gps_rx,
                 nav_rx,
+                payload_rx,
                 mission_tx,
                 teleop_tx,
+                gps_offset_tx,
                 cancel.clone(),
             )))
         }
@@ -202,8 +213,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Suppress unused warnings for CAN channel handles not yet consumed
-    let _ = _can_frame_rx;
     #[cfg(not(feature = "hw"))]
     {
         let _ = can_state_rx;
@@ -222,6 +231,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = thermal_handle.await;
         let _ = display_handle.await;
         let _ = can_handle.await;
+        let _ = payload_handle.await;
         #[cfg(feature = "hw")]
         let _ = gps_handle.await;
         #[cfg(feature = "hw")]

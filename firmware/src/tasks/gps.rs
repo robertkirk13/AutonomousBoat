@@ -1,20 +1,23 @@
 //! GPS task: reads NMEA from EG25-G module over USB serial.
 //! Sends AT+QGPS=1 on the AT port to enable GPS, then reads NMEA from the NMEA port.
 
-use crate::config::{GPS_AT_DEV, GPS_BAUD, GPS_NMEA_DEV};
-use crate::types::GpsPosition;
+use crate::types::{GpsOffset, GpsPosition};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+#[cfg(feature = "hw")]
+use crate::config::{GPS_AT_DEV, GPS_BAUD, GPS_NMEA_DEV};
+
 pub async fn run(
     gps_tx: watch::Sender<GpsPosition>,
+    gps_offset_rx: watch::Receiver<GpsOffset>,
     cancel: CancellationToken,
 ) {
     #[cfg(feature = "hw")]
     {
         let cancel_clone = cancel.clone();
         let handle = tokio::task::spawn_blocking(move || {
-            run_blocking(gps_tx, cancel_clone);
+            run_blocking(gps_tx, gps_offset_rx, cancel_clone);
         });
 
         cancel.cancelled().await;
@@ -80,10 +83,11 @@ fn enable_gps() {
 #[cfg(feature = "hw")]
 fn run_blocking(
     gps_tx: watch::Sender<GpsPosition>,
+    gps_offset_rx: watch::Receiver<GpsOffset>,
     cancel: CancellationToken,
 ) {
     use std::io::{BufRead, BufReader};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     // Enable GPS via AT command port
     enable_gps();
@@ -108,6 +112,7 @@ fn run_blocking(
     tracing::info!("GPS reading NMEA from {GPS_NMEA_DEV}");
 
     let mut reader = BufReader::new(port);
+    let gps_offset_rx = gps_offset_rx;
     let mut line = String::new();
     let mut fix_count: u64 = 0;
 
@@ -119,12 +124,18 @@ fn run_blocking(
                 let trimmed = line.trim();
                 // Parse $GNRMC or $GPRMC sentences
                 if trimmed.starts_with("$GNRMC") || trimmed.starts_with("$GPRMC") {
-                    if let Some(pos) = parse_rmc(trimmed) {
+                    if let Some(mut pos) = parse_rmc(trimmed) {
+                        let offset = gps_offset_rx.borrow().clone();
+                        pos.lat += offset.lat;
+                        pos.lon += offset.lon;
+                        pos.timestamp = Some(Instant::now());
                         fix_count += 1;
                         if fix_count == 1 {
                             tracing::info!(
                                 "GPS first fix: {:.6}, {:.6} ({:.1} m/s)",
-                                pos.lat, pos.lon, pos.speed_mps
+                                pos.lat,
+                                pos.lon,
+                                pos.speed_mps
                             );
                         }
                         let _ = gps_tx.send(pos);
@@ -170,6 +181,7 @@ fn parse_rmc(sentence: &str) -> Option<GpsPosition> {
         lat,
         lon,
         speed_mps,
+        timestamp: None,
     })
 }
 

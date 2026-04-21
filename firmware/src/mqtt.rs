@@ -1,6 +1,7 @@
 use crate::config::*;
 use crate::types::*;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS, TlsConfiguration, Transport};
+use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::Instant;
@@ -11,6 +12,14 @@ use tokio_util::sync::CancellationToken;
 #[derive(Serialize)]
 struct StatusMessage {
     uptime_secs: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum CommandMessage {
+    Reboot,
+    GpsAdjustOffset { delta_lat: f64, delta_lon: f64 },
+    GpsClearOffset,
 }
 
 pub struct MqttConfig {
@@ -25,10 +34,7 @@ impl MqttConfig {
     pub fn from_env() -> Option<Self> {
         Some(Self {
             host: std::env::var("MQTT_HOST").ok()?,
-            port: std::env::var("MQTT_PORT")
-                .ok()?
-                .parse()
-                .ok()?,
+            port: std::env::var("MQTT_PORT").ok()?.parse().ok()?,
             username: std::env::var("MQTT_USER").ok()?,
             password: std::env::var("MQTT_PASS").ok()?,
         })
@@ -42,8 +48,10 @@ pub async fn run(
     thermal_rx: watch::Receiver<ThermalState>,
     gps_rx: watch::Receiver<GpsPosition>,
     nav_rx: watch::Receiver<NavState>,
+    payload_rx: watch::Receiver<PayloadSensorState>,
     mission_tx: watch::Sender<Mission>,
     teleop_tx: watch::Sender<MotorCommand>,
+    gps_offset_tx: watch::Sender<GpsOffset>,
     cancel: CancellationToken,
 ) {
     let mut opts = MqttOptions::new("boat-firmware", &config.host, config.port);
@@ -60,9 +68,9 @@ pub async fn run(
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    opts.set_transport(Transport::tls_with_config(
-        TlsConfiguration::Rustls(Arc::new(tls_config)),
-    ));
+    opts.set_transport(Transport::tls_with_config(TlsConfiguration::Rustls(
+        Arc::new(tls_config),
+    )));
 
     let (client, mut eventloop) = AsyncClient::new(opts, 64);
     let start = Instant::now();
@@ -71,6 +79,7 @@ pub async fn run(
     let cancel_clone = cancel.clone();
     let mission_tx_clone = mission_tx.clone();
     let teleop_tx_clone = teleop_tx.clone();
+    let gps_offset_tx_clone = gps_offset_tx.clone();
     let client_sub = client.clone();
     let eventloop_handle = tokio::spawn(async move {
         let mut subscribed = false;
@@ -109,14 +118,38 @@ pub async fn run(
                                     }
                                 }
                             } else if publish.topic == TOPIC_COMMAND {
-                                if let Ok(cmd) = serde_json::from_slice::<serde_json::Value>(&publish.payload) {
-                                    if cmd.get("action").and_then(|a| a.as_str()) == Some("reboot") {
+                                match serde_json::from_slice::<CommandMessage>(&publish.payload) {
+                                    Ok(CommandMessage::Reboot) => {
                                         tracing::warn!("Reboot command received via MQTT — rebooting");
                                         let _ = std::process::Command::new("sudo").args(["reboot"]).spawn();
                                     }
+                                    Ok(CommandMessage::GpsAdjustOffset { delta_lat, delta_lon }) => {
+                                        if !delta_lat.is_finite() || !delta_lon.is_finite() {
+                                            tracing::warn!("Ignoring non-finite GPS offset adjustment");
+                                            continue;
+                                        }
+
+                                        let current = gps_offset_tx_clone.borrow().clone();
+                                        let next = GpsOffset {
+                                            lat: current.lat + delta_lat,
+                                            lon: current.lon + delta_lon,
+                                        };
+                                        let _ = gps_offset_tx_clone.send(next.clone());
+                                        tracing::info!(
+                                            "Applied GPS offset adjustment: dlat={delta_lat:.8}, dlon={delta_lon:.8} -> lat={:.8}, lon={:.8}",
+                                            next.lat,
+                                            next.lon,
+                                        );
+                                    }
+                                    Ok(CommandMessage::GpsClearOffset) => {
+                                        let _ = gps_offset_tx_clone.send(GpsOffset::default());
+                                        tracing::info!("Cleared GPS offset calibration");
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to parse command: {e}");
+                                    }
                                 }
                             }
-                        }
                         Ok(_) => {}
                         Err(e) => {
                             tracing::warn!("MQTT connection error: {e}");
@@ -136,6 +169,7 @@ pub async fn run(
     let mut power_rx = power_rx;
     let mut thermal_rx = thermal_rx;
     let mut nav_rx = nav_rx;
+    let mut payload_rx = payload_rx;
     let mut status_interval = tokio::time::interval(MQTT_STATUS_INTERVAL);
     let mut imu_interval = tokio::time::interval(MQTT_IMU_INTERVAL);
     let mut gps_interval = tokio::time::interval(GPS_INTERVAL);
@@ -181,6 +215,15 @@ pub async fn run(
                 } else {
                     let state = nav_rx.borrow_and_update().clone();
                     publish_json(&client, TOPIC_NAV, &state).await;
+                }
+            }
+
+            result = payload_rx.changed() => {
+                if result.is_err() {
+                    tracing::warn!("Payload channel closed, stopping payload publishes");
+                } else {
+                    let state = payload_rx.borrow_and_update().clone();
+                    publish_json(&client, TOPIC_PAYLOAD, &state).await;
                 }
             }
 

@@ -4,5 +4,6 @@ pub mod gps;
 pub mod imu;
 pub mod motor;
 pub mod nav;
+pub mod payload;
 pub mod power;
 pub mod thermal;

@@ -61,9 +61,14 @@ impl std::fmt::Display for Mcp2515Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Mcp2515Error::Spi(e) => write!(f, "SPI error: {e}"),
-            Mcp2515Error::NotInConfigMode(s) => write!(f, "not in config mode after reset (0x{s:02X})"),
+            Mcp2515Error::NotInConfigMode(s) => {
+                write!(f, "not in config mode after reset (0x{s:02X})")
+            }
             Mcp2515Error::ModeChangeFailed { requested, actual } => {
-                write!(f, "mode change failed: requested 0x{requested:02X}, got 0x{actual:02X}")
+                write!(
+                    f,
+                    "mode change failed: requested 0x{requested:02X}, got 0x{actual:02X}"
+                )
             }
             Mcp2515Error::TxBusy => write!(f, "TX buffer stuck busy"),
             Mcp2515Error::TxError => write!(f, "TX error flag set"),
@@ -233,7 +238,9 @@ impl Mcp2515 {
 
         // RX buffer 0
         if intf & 0x01 != 0 {
-            if let Some(frame) = self.read_rx_buffer(REG_RXB0SIDH, REG_RXB0SIDL, REG_RXB0DLC, REG_RXB0D0)? {
+            if let Some(frame) =
+                self.read_rx_buffer(REG_RXB0SIDH, REG_RXB0SIDL, REG_RXB0DLC, REG_RXB0D0)?
+            {
                 frames.push(frame);
             }
             self.bit_modify(REG_CANINTF, 0x01, 0x00)?;
@@ -241,7 +248,9 @@ impl Mcp2515 {
 
         // RX buffer 1
         if intf & 0x02 != 0 {
-            if let Some(frame) = self.read_rx_buffer(REG_RXB1SIDH, REG_RXB1SIDL, REG_RXB1DLC, REG_RXB1D0)? {
+            if let Some(frame) =
+                self.read_rx_buffer(REG_RXB1SIDH, REG_RXB1SIDL, REG_RXB1DLC, REG_RXB1D0)?
+            {
                 frames.push(frame);
             }
             self.bit_modify(REG_CANINTF, 0x02, 0x00)?;
@@ -287,11 +296,6 @@ impl Mcp2515 {
             }
         }
 
-        Ok(Some(CanFrame {
-            id,
-            rtr,
-            dlc,
-            data,
-        }))
+        Ok(Some(CanFrame { id, rtr, dlc, data }))
     }
 }

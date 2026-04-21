@@ -76,6 +76,7 @@ impl Bno055 {
             qx,
             qy,
             qz,
+            timestamp: None,
         })
     }
 }

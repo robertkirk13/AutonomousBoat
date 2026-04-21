@@ -273,9 +273,7 @@ fn smbus_read_word_data(fd: i32, reg: u8) -> Result<u16, I2cError> {
 
 #[cfg(feature = "hw")]
 fn i2c_read_block(fd: i32, reg: u8, len: usize) -> Result<Vec<u8>, I2cError> {
-    let mut data = SmbusData {
-        block: [0u8; 34],
-    };
+    let mut data = SmbusData { block: [0u8; 34] };
     unsafe { data.block[0] = len as u8 };
     let args = SmbusIoctlData {
         read_write: I2C_SMBUS_READ,

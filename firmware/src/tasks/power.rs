@@ -6,11 +6,7 @@ use std::time::Instant;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-pub async fn run(
-    bus: I2cBus,
-    tx: watch::Sender<PowerState>,
-    cancel: CancellationToken,
-) {
+pub async fn run(bus: I2cBus, tx: watch::Sender<PowerState>, cancel: CancellationToken) {
     let sensors: Vec<Ina228> = INA228_CHANNELS
         .iter()
         .map(|(addr, label)| Ina228::new(bus.clone(), *addr, label))
@@ -50,4 +46,3 @@ pub async fn run(
 
     tracing::info!("Power task stopped");
 }
-

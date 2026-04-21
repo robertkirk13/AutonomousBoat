@@ -18,6 +18,8 @@ pub struct ImuData {
     pub qx: f64,
     pub qy: f64,
     pub qz: f64,
+    #[serde(skip)]
+    pub timestamp: Option<Instant>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -74,6 +76,14 @@ pub struct GpsPosition {
     pub lat: f64,
     pub lon: f64,
     pub speed_mps: f64,
+    #[serde(skip)]
+    pub timestamp: Option<Instant>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GpsOffset {
+    pub lat: f64,
+    pub lon: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -102,6 +112,7 @@ pub struct NavState {
 #[serde(rename_all = "snake_case")]
 pub enum NavMode {
     Idle,
+    Holding,
     Running,
     Completed,
 }
@@ -142,4 +153,18 @@ pub struct CanState {
     pub rx_count: u64,
     pub tx_count: u64,
     pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct PayloadSensorState {
+    pub connected: bool,
+    pub rx_count: u64,
+    pub last_frame_id: Option<u16>,
+    pub temperature_f: Option<f64>,
+    pub ph: Option<f64>,
+    pub ec_ms_cm: Option<f64>,
+    pub turbidity_ntu: Option<f64>,
+    pub sonar_in: Option<f64>,
+    #[serde(skip)]
+    pub timestamp: Option<Instant>,
 }

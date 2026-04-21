@@ -1,12 +1,24 @@
 //! Autopilot: navigates between mission waypoints using GPS + IMU.
 
-use crate::config::{NAV_INTERVAL, WAYPOINT_REACHED_M};
+use crate::config::{GPS_STALE_TIMEOUT, IMU_STALE_TIMEOUT, NAV_INTERVAL, WAYPOINT_REACHED_M};
 use crate::types::*;
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 /// Meters per degree of latitude.
 const M_PER_DEG_LAT: f64 = 111_320.0;
+
+/// Keep the controller deliberately simple: cruise straight, reduce the inner motor
+/// when the heading error grows, and stop the inner motor entirely for hard turns.
+const CLOSE_APPROACH_M: f64 = 8.0;
+const STRAIGHT_ERROR_DEG: f64 = 10.0;
+const HARD_TURN_ERROR_DEG: f64 = 60.0;
+const CRUISE_THRUST: f64 = 0.55;
+const APPROACH_THRUST: f64 = 0.32;
+const HARD_TURN_THRUST: f64 = 0.32;
+const MIN_INNER_THRUST: f64 = 0.10;
+const MAX_SLEW_PER_TICK: f64 = 0.12;
 
 /// Haversine-like flat-earth distance (good enough at small scales).
 fn distance_m(a_lat: f64, a_lon: f64, b_lat: f64, b_lon: f64) -> f64 {
@@ -26,9 +38,103 @@ fn bearing_deg(a_lat: f64, a_lon: f64, b_lat: f64, b_lon: f64) -> f64 {
 /// Shortest signed angle difference (degrees), result in [-180, 180].
 fn angle_diff(from: f64, to: f64) -> f64 {
     let mut d = to - from;
-    if d > 180.0 { d -= 360.0; }
-    if d < -180.0 { d += 360.0; }
+    if d > 180.0 {
+        d -= 360.0;
+    }
+    if d < -180.0 {
+        d += 360.0;
+    }
     d
+}
+
+fn is_recent(timestamp: Option<Instant>, timeout: Duration, now: Instant) -> bool {
+    timestamp
+        .map(|timestamp| now.duration_since(timestamp) <= timeout)
+        .unwrap_or(false)
+}
+
+fn gps_is_valid(gps: &GpsPosition, now: Instant) -> bool {
+    gps.lat.is_finite()
+        && gps.lon.is_finite()
+        && !(gps.lat == 0.0 && gps.lon == 0.0)
+        && is_recent(gps.timestamp, GPS_STALE_TIMEOUT, now)
+}
+
+fn heading_is_valid(imu: Option<&ImuData>, now: Instant) -> bool {
+    imu.map(|imu| imu.heading.is_finite() && is_recent(imu.timestamp, IMU_STALE_TIMEOUT, now))
+        .unwrap_or(false)
+}
+
+fn cruise_thrust(distance_m: f64) -> f64 {
+    if distance_m < CLOSE_APPROACH_M {
+        APPROACH_THRUST
+    } else {
+        CRUISE_THRUST
+    }
+}
+
+fn compute_target_thrust(error_deg: f64, distance_m: f64) -> MotorCommand {
+    let abs_error = error_deg.abs();
+    let outer = cruise_thrust(distance_m);
+
+    if abs_error <= STRAIGHT_ERROR_DEG {
+        return MotorCommand {
+            left: outer,
+            right: outer,
+        };
+    }
+
+    if abs_error >= HARD_TURN_ERROR_DEG {
+        let turn = MotorCommand {
+            left: HARD_TURN_THRUST,
+            right: 0.0,
+        };
+        return if error_deg.is_sign_positive() {
+            turn
+        } else {
+            MotorCommand {
+                left: turn.right,
+                right: turn.left,
+            }
+        };
+    }
+
+    let turn_ratio = (abs_error - STRAIGHT_ERROR_DEG) / (HARD_TURN_ERROR_DEG - STRAIGHT_ERROR_DEG);
+    let inner = (outer * (1.0 - turn_ratio)).max(MIN_INNER_THRUST);
+    if error_deg.is_sign_positive() {
+        MotorCommand {
+            left: outer,
+            right: inner,
+        }
+    } else {
+        MotorCommand {
+            left: inner,
+            right: outer,
+        }
+    }
+}
+
+fn slew_limit(previous: f64, target: f64) -> f64 {
+    previous + (target - previous).clamp(-MAX_SLEW_PER_TICK, MAX_SLEW_PER_TICK)
+}
+
+fn build_nav_state(
+    mode: NavMode,
+    target_wp: usize,
+    total_wps: usize,
+    distance_m: f64,
+    bearing_deg: f64,
+    cmd: &MotorCommand,
+) -> NavState {
+    NavState {
+        mode,
+        target_wp,
+        total_wps,
+        distance_m,
+        bearing_deg,
+        left_thrust: cmd.left,
+        right_thrust: cmd.right,
+    }
 }
 
 pub async fn run(
@@ -44,11 +150,8 @@ pub async fn run(
     let mut mission_rx = mission_rx;
     let mut mission = mission_rx.borrow().clone();
     let mut current_wp: usize = 0;
-    let mut prev_error: f64 = 0.0;
-    let mut prev_left: f64 = 0.0;
-    let mut prev_right: f64 = 0.0;
+    let mut previous_cmd = MotorCommand::default();
     let mut waiting_for_fix = false;
-    let max_slew = 0.1; // max thrust change per tick (0.1 = 10% per 200ms)
 
     loop {
         tokio::select! {
@@ -59,11 +162,10 @@ pub async fn run(
         if matches!(mission_rx.has_changed(), Ok(true)) {
             mission = mission_rx.borrow_and_update().clone();
             current_wp = 0;
-            prev_error = 0.0;
-            prev_left = 0.0;
-            prev_right = 0.0;
+            previous_cmd = MotorCommand::default();
             waiting_for_fix = false;
-            let _ = motor_tx.send(MotorCommand::default());
+            let stop = MotorCommand::default();
+            let _ = motor_tx.send(stop.clone());
 
             if mission.waypoints.is_empty() {
                 let _ = nav_tx.send(NavState::default());
@@ -71,6 +173,14 @@ pub async fn run(
                 continue;
             }
 
+            let _ = nav_tx.send(build_nav_state(
+                NavMode::Holding,
+                current_wp,
+                mission.waypoints.len(),
+                0.0,
+                0.0,
+                &stop,
+            ));
             tracing::info!("Mission updated: {} waypoints", mission.waypoints.len());
         }
 
@@ -78,87 +188,177 @@ pub async fn run(
             continue;
         }
 
-        let gps = gps_rx.borrow().clone();
-        let heading = imu_rx.borrow().as_ref().map(|a| a.heading);
+        if current_wp >= mission.waypoints.len() {
+            let stop = MotorCommand::default();
+            let _ = motor_tx.send(stop.clone());
+            let _ = nav_tx.send(build_nav_state(
+                NavMode::Completed,
+                current_wp,
+                mission.waypoints.len(),
+                0.0,
+                0.0,
+                &stop,
+            ));
+            continue;
+        }
 
-        // Hold the boat stationary whenever a mission exists but sensors are not trustworthy.
-        if heading.is_none() || (gps.lat == 0.0 && gps.lon == 0.0) {
-            prev_error = 0.0;
-            prev_left = 0.0;
-            prev_right = 0.0;
-            let _ = motor_tx.send(MotorCommand::default());
+        let now = Instant::now();
+        let gps = gps_rx.borrow().clone();
+        let imu = imu_rx.borrow().clone();
+
+        if !gps_is_valid(&gps, now) || !heading_is_valid(imu.as_ref(), now) {
+            previous_cmd = MotorCommand::default();
+            let stop = MotorCommand::default();
+            let _ = motor_tx.send(stop.clone());
+            let _ = nav_tx.send(build_nav_state(
+                NavMode::Holding,
+                current_wp,
+                mission.waypoints.len(),
+                0.0,
+                0.0,
+                &stop,
+            ));
             if !waiting_for_fix {
-                tracing::warn!("Nav hold: waiting for valid IMU and GPS data");
+                tracing::warn!("Nav hold: waiting for fresh GPS and IMU data");
                 waiting_for_fix = true;
             }
             continue;
         }
+
         if waiting_for_fix {
-            tracing::info!("Navigation resumed after sensor fix");
+            tracing::info!("Navigation resumed after fresh sensor data");
             waiting_for_fix = false;
         }
-        let heading = heading.unwrap_or(0.0);
 
-        // Already completed all waypoints?
-        if current_wp >= mission.waypoints.len() {
-            let _ = motor_tx.send(MotorCommand::default());
-            let _ = nav_tx.send(NavState {
-                mode: NavMode::Completed,
-                target_wp: current_wp,
-                total_wps: mission.waypoints.len(),
-                distance_m: 0.0,
-                bearing_deg: 0.0,
-                left_thrust: 0.0,
-                right_thrust: 0.0,
-            });
-            continue;
-        }
-
+        let heading = imu
+            .as_ref()
+            .map(|imu| imu.heading.rem_euclid(360.0))
+            .unwrap_or(0.0);
         let wp = &mission.waypoints[current_wp];
-        let dist = distance_m(gps.lat, gps.lon, wp.lat, wp.lon);
+        let distance = distance_m(gps.lat, gps.lon, wp.lat, wp.lon);
         let target_bearing = bearing_deg(gps.lat, gps.lon, wp.lat, wp.lon);
 
-        // Waypoint reached?
-        if dist < WAYPOINT_REACHED_M {
-            tracing::info!("Reached waypoint {} (dist={dist:.1}m)", current_wp + 1);
+        if distance < WAYPOINT_REACHED_M {
+            tracing::info!("Reached waypoint {} (dist={distance:.1}m)", current_wp + 1);
             current_wp += 1;
+            previous_cmd = MotorCommand::default();
+            let stop = MotorCommand::default();
+            let _ = motor_tx.send(stop.clone());
+            let mode = if current_wp >= mission.waypoints.len() {
+                NavMode::Completed
+            } else {
+                NavMode::Holding
+            };
+            let _ = nav_tx.send(build_nav_state(
+                mode,
+                current_wp,
+                mission.waypoints.len(),
+                0.0,
+                0.0,
+                &stop,
+            ));
             continue;
         }
 
-        // PD steering controller
         let error = angle_diff(heading, target_bearing);
-        let d_error = error - prev_error;
-        prev_error = error;
+        let target_cmd = compute_target_thrust(error, distance);
+        let cmd = MotorCommand {
+            left: slew_limit(previous_cmd.left, target_cmd.left),
+            right: slew_limit(previous_cmd.right, target_cmd.right),
+        };
+        previous_cmd = cmd.clone();
 
-        let kp = 0.3 / 90.0; // proportional gain
-        let kd = 0.15 / 90.0; // derivative gain (dampen oscillation)
-        let turn = (kp * error + kd * d_error).clamp(-1.0, 1.0);
-
-        // Base thrust — slow down near waypoint, reduce when turning hard
-        let base = if dist < 10.0 { 0.4 } else { 0.7 };
-        let steer_penalty = 1.0 - 0.3 * turn.abs();
-
-        let target_left = (base * steer_penalty + turn * 0.3).clamp(0.0, 1.0);
-        let target_right = (base * steer_penalty - turn * 0.3).clamp(0.0, 1.0);
-
-        // Slew rate limit — prevent abrupt thrust changes
-        let left = prev_left + (target_left - prev_left).clamp(-max_slew, max_slew);
-        let right = prev_right + (target_right - prev_right).clamp(-max_slew, max_slew);
-        prev_left = left;
-        prev_right = right;
-
-        let _ = motor_tx.send(MotorCommand { left, right });
-        let _ = nav_tx.send(NavState {
-            mode: NavMode::Running,
-            target_wp: current_wp,
-            total_wps: mission.waypoints.len(),
-            distance_m: dist,
-            bearing_deg: target_bearing,
-            left_thrust: left,
-            right_thrust: right,
-        });
+        let _ = motor_tx.send(cmd.clone());
+        let _ = nav_tx.send(build_nav_state(
+            NavMode::Running,
+            current_wp,
+            mission.waypoints.len(),
+            distance,
+            target_bearing,
+            &cmd,
+        ));
     }
 
-    let _ = motor_tx.send(MotorCommand::default());
+    let stop = MotorCommand::default();
+    let _ = motor_tx.send(stop);
     tracing::info!("Navigation task stopped");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn imu_with_timestamp(timestamp: Instant) -> ImuData {
+        ImuData {
+            heading: 90.0,
+            roll: 0.0,
+            pitch: 0.0,
+            qw: 1.0,
+            qx: 0.0,
+            qy: 0.0,
+            qz: 0.0,
+            timestamp: Some(timestamp),
+        }
+    }
+
+    #[test]
+    fn angle_diff_wraps_the_short_way() {
+        assert_eq!(angle_diff(350.0, 10.0), 20.0);
+        assert_eq!(angle_diff(10.0, 350.0), -20.0);
+    }
+
+    #[test]
+    fn stale_gps_forces_hold() {
+        let now = Instant::now();
+        let gps = GpsPosition {
+            lat: 47.6,
+            lon: -122.3,
+            speed_mps: 0.0,
+            timestamp: Some(now - GPS_STALE_TIMEOUT - Duration::from_millis(1)),
+        };
+
+        assert!(!gps_is_valid(&gps, now));
+    }
+
+    #[test]
+    fn stale_imu_forces_hold() {
+        let now = Instant::now();
+        let imu = imu_with_timestamp(now - IMU_STALE_TIMEOUT - Duration::from_millis(1));
+
+        assert!(!heading_is_valid(Some(&imu), now));
+    }
+
+    #[test]
+    fn small_heading_error_cruises_straight() {
+        let cmd = compute_target_thrust(4.0, 20.0);
+
+        assert_eq!(
+            cmd,
+            MotorCommand {
+                left: CRUISE_THRUST,
+                right: CRUISE_THRUST,
+            }
+        );
+    }
+
+    #[test]
+    fn moderate_right_turn_keeps_outer_motor_faster() {
+        let cmd = compute_target_thrust(30.0, 20.0);
+
+        assert!(cmd.left > cmd.right);
+        assert!(cmd.right >= MIN_INNER_THRUST);
+    }
+
+    #[test]
+    fn hard_left_turn_stops_inner_motor() {
+        let cmd = compute_target_thrust(-80.0, 20.0);
+
+        assert_eq!(
+            cmd,
+            MotorCommand {
+                left: 0.0,
+                right: HARD_TURN_THRUST,
+            }
+        );
+    }
 }

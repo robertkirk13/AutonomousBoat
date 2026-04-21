@@ -176,10 +176,14 @@ fn encode_quaternion(heading_deg: f64, roll_deg: f64, pitch_deg: f64) -> [u8; 8]
     let y = (qy * scale) as i16;
     let z = (qz * scale) as i16;
     [
-        (w & 0xFF) as u8, ((w >> 8) & 0xFF) as u8,
-        (x & 0xFF) as u8, ((x >> 8) & 0xFF) as u8,
-        (y & 0xFF) as u8, ((y >> 8) & 0xFF) as u8,
-        (z & 0xFF) as u8, ((z >> 8) & 0xFF) as u8,
+        (w & 0xFF) as u8,
+        ((w >> 8) & 0xFF) as u8,
+        (x & 0xFF) as u8,
+        ((x >> 8) & 0xFF) as u8,
+        (y & 0xFF) as u8,
+        ((y >> 8) & 0xFF) as u8,
+        (z & 0xFF) as u8,
+        ((z >> 8) & 0xFF) as u8,
     ]
 }
 
@@ -223,13 +227,9 @@ pub fn run_bus_owner_sim(rx: &mut mpsc::Receiver<I2cRequest>, world: &SimWorld) 
             } => {
                 let data = match (addr, reg) {
                     // INA228 VBUS (3 bytes)
-                    (0x40..=0x48, 0x05) => {
-                        encode_vbus(state.voltage_v(addr)).to_vec()
-                    }
+                    (0x40..=0x48, 0x05) => encode_vbus(state.voltage_v(addr)).to_vec(),
                     // INA228 CURRENT (3 bytes)
-                    (0x40..=0x48, 0x07) => {
-                        encode_current(state.current_a(addr)).to_vec()
-                    }
+                    (0x40..=0x48, 0x07) => encode_current(state.current_a(addr)).to_vec(),
                     // INA228 POWER (3 bytes)
                     (0x40..=0x48, 0x08) => {
                         let v = state.voltage_v(addr);
