@@ -1,15 +1,28 @@
 # Deploying to the Pi
 
+This document covers deploying or updating software on a provisioned Raspberry Pi. For first-boot provisioning, start with [`setup.md`](./setup.md) or use `./scripts/flash-sd.sh`.
+
+## Assumptions
+
+- the repo is cloned at `~/AutonomousBoat` on the Pi
+- the firmware binary is copied to `~/boat-firmware`
+- MQTT credentials live in `~/.env`
+- hotspot/uplink settings live in `/etc/default/boat-network`
+- the systemd templates come from `deploy/systemd/`
+
 ## Prerequisites
 
 On your Mac:
-- Rust with `aarch64-unknown-linux-gnu` target: `rustup target add aarch64-unknown-linux-gnu`
-- Cross-linker: `brew install aarch64-unknown-linux-gnu`
-- **Do NOT use `cross`** — it tries to run inside a Docker/Linux container and fails on macOS ARM. Use `cargo` directly with the cross-linker.
+
+- Rust with the `aarch64-unknown-linux-gnu` target: `rustup target add aarch64-unknown-linux-gnu`
+- GNU cross-linker: `brew install aarch64-unknown-linux-gnu`
+- On macOS ARM, use `cargo` directly. Do not use `cross` here.
 
 On the Pi:
-- Raspberry Pi OS Lite (64-bit) with I2C/SPI enabled (see README.md steps 1-7)
-- Python deps for OLED: `sudo apt install -y python3-smbus2 python3-pip && pip3 install luma.oled`
+
+- Raspberry Pi OS Lite with I2C/SPI enabled
+- base packages from [`setup.md`](./setup.md)
+- repo checkout at `~/AutonomousBoat`
 
 ## 1. Build firmware
 
@@ -18,137 +31,159 @@ cd firmware
 cargo build --release --target aarch64-unknown-linux-gnu
 ```
 
-The binary is at `target/aarch64-unknown-linux-gnu/release/boat-firmware`.
+The binary is produced at `target/aarch64-unknown-linux-gnu/release/boat-firmware`.
 
-## 2. Copy to Pi
+## 2. Copy files to the Pi
 
 ```bash
-scp target/aarch64-unknown-linux-gnu/release/boat-firmware chuck@castaway.local:~/
+scp target/aarch64-unknown-linux-gnu/release/boat-firmware chuck@castaway.local:~/boat-firmware
 scp .env chuck@castaway.local:~/.env
 ```
 
-Make sure `~/.env` on the Pi has your MQTT credentials:
+If you are running those commands from the repo root instead of inside `firmware/`, use `firmware/target/...` and `firmware/.env`.
 
-```
-MQTT_HOST=your-hivemq-host.s1.eu.hivemq.cloud
-MQTT_PORT=8883
-MQTT_USER=your_user
-MQTT_PASS=your_pass
-```
-
-## 3. Quick test (manual run)
-
-SSH into the Pi and run it directly to verify everything works:
+## 3. Quick test
 
 ```bash
 ssh chuck@castaway.local
 sudo ~/boat-firmware
 ```
 
-You should see output like:
-```
-BoatCore firmware starting
-I2C bus owner started on /dev/i2c-1
-BNO055 initialized (NDOF mode)
-MQTT started -> your-host:8883
-GPS reading NMEA from /dev/ttyUSB1
-MCP2515 CAN initialized (500kbps, normal mode)
-```
+You should see startup logs for the sensor tasks, MQTT, GPS, PWM ESC bringup, and CAN stack. Stop it with `Ctrl-C` after the smoke test.
 
-Ctrl-C to stop.
+## 4. Install or update services
 
-## 4. Install as systemd service
+From the Pi:
 
 ```bash
-# Copy service files (from the repo on the Pi)
 cd ~/AutonomousBoat
+```
+
+If the Pi username is the default `chuck`, direct copies are fine:
+
+```bash
+sudo install -m 0755 scripts/boat-network.sh /usr/local/sbin/boat-network.sh
 sudo cp deploy/systemd/boat-firmware.service /etc/systemd/system/
 sudo cp deploy/systemd/ssd1306-dashboard.service /etc/systemd/system/
+sudo cp deploy/systemd/boat-hotspot.service /etc/systemd/system/
+```
 
-# Reload and enable both services
+If you used a different Pi username, rewrite the home-directory paths during install:
+
+```bash
+sudo install -m 0755 scripts/boat-network.sh /usr/local/sbin/boat-network.sh
+sed "s|/home/chuck|$HOME|g" deploy/systemd/boat-firmware.service | sudo tee /etc/systemd/system/boat-firmware.service > /dev/null
+sed "s|/home/chuck|$HOME|g" deploy/systemd/ssd1306-dashboard.service | sudo tee /etc/systemd/system/ssd1306-dashboard.service > /dev/null
+sudo cp deploy/systemd/boat-hotspot.service /etc/systemd/system/
+```
+
+Optional camera service:
+
+```bash
+sed "s|/home/chuck|$HOME|g; s|User=chuck|User=$USER|g" deploy/systemd/camera-stream.service | sudo tee /etc/systemd/system/camera-stream.service > /dev/null
+```
+
+Reload and enable:
+
+```bash
+sudo /usr/local/sbin/boat-network.sh install
 sudo systemctl daemon-reload
-sudo systemctl enable boat-firmware ssd1306-dashboard
-sudo systemctl start boat-firmware ssd1306-dashboard
+sudo systemctl enable boat-firmware ssd1306-dashboard boat-hotspot
+sudo systemctl start boat-firmware ssd1306-dashboard boat-hotspot
+```
+
+If you want the camera stream too:
+
+```bash
+sudo systemctl enable camera-stream
+sudo systemctl start camera-stream
 ```
 
 ## 5. Verify
 
 ```bash
-# Check firmware is running
 sudo systemctl status boat-firmware
-
-# Watch firmware logs
-journalctl -u boat-firmware -f
-
-# Check OLED dashboard is running
 sudo systemctl status ssd1306-dashboard
+sudo systemctl status boat-hotspot
+journalctl -u boat-hotspot -n 50
+journalctl -u boat-firmware -f
 ```
 
-## Service management
+## Updating Day-to-Day
 
-```bash
-# Stop
-sudo systemctl stop boat-firmware
-
-# Restart
-sudo systemctl restart boat-firmware
-
-# Disable from starting on boot
-sudo systemctl disable boat-firmware
-
-# View recent logs
-journalctl -u boat-firmware --since "5 min ago"
-
-# Same commands work for ssd1306-dashboard
-```
-
-## Updating firmware
-
-From your Mac:
+Firmware:
 
 ```bash
 cd firmware
 cargo build --release --target aarch64-unknown-linux-gnu
-scp target/aarch64-unknown-linux-gnu/release/boat-firmware chuck@castaway.local:~/
+scp target/aarch64-unknown-linux-gnu/release/boat-firmware chuck@castaway.local:~/boat-firmware
 ssh chuck@castaway.local 'sudo systemctl restart boat-firmware'
 ```
 
-## Updating Python display script
+Python scripts or unit-file changes:
 
 ```bash
-# Push changes to git, then on the Pi:
-cd ~/AutonomousBoat && git pull
+ssh chuck@castaway.local
+cd ~/AutonomousBoat
+git pull
+sudo install -m 0755 scripts/boat-network.sh /usr/local/sbin/boat-network.sh
+sudo /usr/local/sbin/boat-network.sh install
 sudo systemctl restart ssd1306-dashboard
+```
+
+If a service template changed and you are not using the default `chuck` user, rerun the path-rewrite install commands before restarting the service. If the hotspot helper or its config changed, restart it too:
+
+```bash
+sudo systemctl restart boat-hotspot
 ```
 
 ## Troubleshooting
 
-**Firmware won't start / exits immediately:**
+Firmware exits immediately:
+
 ```bash
-journalctl -u boat-firmware -n 50    # check last 50 log lines
+journalctl -u boat-firmware -n 50
 ```
 
-**MQTT not connecting:**
-- Check `~/.env` exists and has correct credentials
-- Verify port 8883 is reachable: `openssl s_client -connect your-host:8883`
+MQTT not connecting:
 
-**I2C devices not found:**
+- check `~/.env`
+- verify the broker host and port
+- test TLS reachability with `openssl s_client -connect your-host:8883`
+
+I2C devices missing:
+
 ```bash
-i2cdetect -y 1    # should show 28, 3c, 40-48, 4a, 4b
+i2cdetect -y 1
 ```
 
-**GPS not working:**
-```bash
-ls /dev/ttyUSB*    # should show ttyUSB0, ttyUSB1, ttyUSB2
-```
-If devices are missing, the EG25-G modem may not be powered or enumerated. Check USB connections. The firmware retries every 5s.
+Display stuck or garbled:
 
-**Display stuck/garbled:**
 ```bash
 sudo systemctl stop ssd1306-dashboard
 sudo python3 ~/AutonomousBoat/scripts/reset_ssd1306.py
 sudo systemctl start ssd1306-dashboard
 ```
 
-**CAN bus errors:**
-CAN TX errors are normal if there's no second node on the bus. The MCP2515 init retries every 5s if SPI isn't ready.
+GPS serial ports missing:
+
+```bash
+ls /dev/ttyUSB*
+```
+
+Hotspot did not come up:
+
+```bash
+sudo /usr/local/sbin/boat-network.sh status
+journalctl -u boat-hotspot -n 50
+```
+
+If the hardware does not support concurrent AP + client mode, use:
+
+```bash
+sudo /usr/local/sbin/boat-network.sh hotspot-up takeover
+```
+
+CAN TX errors with no second node on the bus are expected.
+
+If the firmware logs that PWM ESC outputs are unavailable, confirm that PWM0/PWM1 are enabled and routed to GPIO12/GPIO13 before restarting the service.

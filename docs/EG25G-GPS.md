@@ -4,6 +4,8 @@
 
 The Quectel EG25-G is an LTE Cat 4 modem with built-in GNSS (GPS/GLONASS/BeiDou/Galileo). On Wilson it provides both cellular connectivity and GPS positioning.
 
+The automated `scripts/flash-sd.sh` provisioning flow now leaves ModemManager enabled and installs the ignore-port udev rule below by default, so LTE and direct GPS access can coexist.
+
 When plugged in via USB, the EG25-G exposes multiple serial ports:
 
 | Port | Default Device | Function |
@@ -73,6 +75,7 @@ Apply the rule:
 ```bash
 sudo udevadm control --reload-rules
 sudo udevadm trigger
+sudo systemctl restart ModemManager
 ```
 
 ## Enabling GPS via AT Commands
@@ -135,7 +138,7 @@ This enables GPS via AT commands and prints parsed coordinates from NMEA.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `Device or resource busy` on `/dev/ttyUSB2` | ModemManager holding the port | `sudo systemctl stop ModemManager` |
+| `Device or resource busy` on `/dev/ttyUSB2` | ModemManager is still claiming the AT port | Confirm the ignore-port udev rule is installed, then `sudo systemctl restart ModemManager` |
 | No `/dev/ttyUSB*` devices | Module not powered or USB not connected | Check USB cable, check `lsusb` for `2c7c:0125` |
 | NMEA sentences but no fix (`V` status) | No satellite lock | Move antenna outdoors, wait 1-3 min (cold start) |
 | `+CME ERROR: 516` from `AT+QGPSLOC` | No fix yet | Wait for satellites, check antenna |

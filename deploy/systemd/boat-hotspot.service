@@ -1,0 +1,13 @@
+[Unit]
+Description=Boat Wi-Fi Hotspot
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/boat-network.sh hotspot-up
+ExecStop=/usr/local/sbin/boat-network.sh hotspot-down
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

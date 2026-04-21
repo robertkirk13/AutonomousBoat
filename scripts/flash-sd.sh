@@ -12,7 +12,11 @@
 #   -p PASSWORD   Pi password (default: prompt)
 #   -s SSID       WiFi SSID (default: prompt)
 #   -w WIFIPASS   WiFi password (default: prompt)
+#   -S HOTSPOT    Hotspot SSID (default: <hostname>-setup)
+#   -W HOTPASS    Hotspot password (default: auto-generated)
+#   -A ASSETDIR   Use pre-staged provisioning assets from this directory
 #   -i IMAGE      Path to .img or .img.xz file (default: downloads latest Pi OS Lite 64-bit)
+#   -y            Skip the destructive confirmation prompt
 #   -h            Show this help
 #
 set -euo pipefail
@@ -26,15 +30,20 @@ USERNAME="chuck"
 PASSWORD=""
 WIFI_SSID=""
 WIFI_PASS=""
+HOTSPOT_SSID=""
+HOTSPOT_PASS=""
+ASSET_DIR=""
 IMAGE=""
 DISK=""
+AUTO_CONFIRM=0
+TEMP_ASSET_DIR=""
 
 usage() {
-    sed -n '3,14p' "$0" | sed 's/^# \?//'
+    sed -n '3,18p' "$0" | sed 's/^# \?//'
     exit 0
 }
 
-while getopts "d:n:u:p:s:w:i:h" opt; do
+while getopts "d:n:u:p:s:w:S:W:A:i:yh" opt; do
     case $opt in
         d) DISK="$OPTARG" ;;
         n) HOSTNAME="$OPTARG" ;;
@@ -42,7 +51,11 @@ while getopts "d:n:u:p:s:w:i:h" opt; do
         p) PASSWORD="$OPTARG" ;;
         s) WIFI_SSID="$OPTARG" ;;
         w) WIFI_PASS="$OPTARG" ;;
+        S) HOTSPOT_SSID="$OPTARG" ;;
+        W) HOTSPOT_PASS="$OPTARG" ;;
+        A) ASSET_DIR="$OPTARG" ;;
         i) IMAGE="$OPTARG" ;;
+        y) AUTO_CONFIRM=1 ;;
         h) usage ;;
         *) usage ;;
     esac
@@ -60,6 +73,40 @@ ok()    { echo -e "${GREEN}==> ${NC}$*"; }
 warn()  { echo -e "${YELLOW}==> ${NC}$*"; }
 fail()  { echo -e "${RED}==> ERROR: ${NC}$*"; exit 1; }
 
+escape_sed_replacement() {
+    printf '%s' "$1" | sed -e 's/[\\/&|]/\\&/g'
+}
+
+quote_for_shell() {
+    printf '%q' "$1"
+}
+
+cleanup() {
+    if [[ -n "${TEMP_ASSET_DIR:-}" && -d "${TEMP_ASSET_DIR:-}" ]]; then
+        rm -rf "$TEMP_ASSET_DIR"
+    fi
+}
+
+trap cleanup EXIT
+
+prepare_assets() {
+    local helper
+    helper="$SCRIPT_DIR/prepare-provisioning-assets.sh"
+
+    if [[ -n "$ASSET_DIR" ]]; then
+        [[ -d "$ASSET_DIR" ]] || fail "Asset directory not found: $ASSET_DIR"
+    else
+        TEMP_ASSET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/boat-assets.XXXXXX")"
+        info "Preparing provisioning assets"
+        "$helper" -o "$TEMP_ASSET_DIR"
+        ASSET_DIR="$TEMP_ASSET_DIR"
+    fi
+
+    [[ -f "$ASSET_DIR/repo-bundle.tar.gz" ]] || fail "Missing repo-bundle.tar.gz in $ASSET_DIR"
+    [[ -f "$ASSET_DIR/boat-firmware" ]] || fail "Missing boat-firmware in $ASSET_DIR"
+    [[ -f "$ASSET_DIR/mqtt.env" ]] || fail "Missing mqtt.env in $ASSET_DIR"
+}
+
 # -- Prompt for missing values --
 if [[ -z "$PASSWORD" ]]; then
     read -rsp "Password for user '$USERNAME' on the Pi: " PASSWORD
@@ -68,15 +115,24 @@ if [[ -z "$PASSWORD" ]]; then
 fi
 
 if [[ -z "$WIFI_SSID" ]]; then
-    read -rp "WiFi SSID: " WIFI_SSID
-    [[ -n "$WIFI_SSID" ]] || fail "WiFi SSID cannot be empty"
+    read -rp "WiFi SSID (leave blank to skip client WiFi): " WIFI_SSID
 fi
 
-if [[ -z "$WIFI_PASS" ]]; then
+if [[ -n "$WIFI_SSID" && -z "$WIFI_PASS" ]]; then
     read -rsp "WiFi password: " WIFI_PASS
     echo
     [[ -n "$WIFI_PASS" ]] || fail "WiFi password cannot be empty"
 fi
+
+if [[ -z "$HOTSPOT_SSID" ]]; then
+    HOTSPOT_SSID="${HOSTNAME}-setup"
+fi
+
+if [[ -z "$HOTSPOT_PASS" ]]; then
+    HOTSPOT_PASS="$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | cut -c1-12)"
+fi
+
+[[ ${#HOTSPOT_PASS} -ge 8 ]] || fail "Hotspot password must be at least 8 characters"
 
 # -- Detect or validate target disk --
 if [[ "$(uname)" != "Darwin" ]]; then
@@ -119,7 +175,14 @@ info "Configuration:"
 echo "  Disk:     $DEVICE"
 echo "  Hostname: $HOSTNAME"
 echo "  User:     $USERNAME"
-echo "  WiFi:     $WIFI_SSID"
+echo "  WiFi:     ${WIFI_SSID:-<not configured>}"
+echo "  Hotspot:  $HOTSPOT_SSID"
+echo "  Hotspot password: $HOTSPOT_PASS"
+if [[ -n "$ASSET_DIR" ]]; then
+    echo "  Assets:   $ASSET_DIR"
+else
+    echo "  Assets:   auto-build from current repo"
+fi
 echo ""
 
 # Show disk info
@@ -127,8 +190,12 @@ diskutil info "$DEVICE" 2>/dev/null | grep -E '(Device / Media Name|Disk Size|Vo
 echo ""
 
 warn "THIS WILL ERASE ALL DATA ON $DEVICE"
-read -rp "Type 'yes' to continue: " CONFIRM
-[[ "$CONFIRM" == "yes" ]] || { echo "Aborted."; exit 1; }
+if [[ "$AUTO_CONFIRM" != "1" ]]; then
+    read -rp "Type 'yes' to continue: " CONFIRM
+    [[ "$CONFIRM" == "yes" ]] || { echo "Aborted."; exit 1; }
+fi
+
+prepare_assets
 
 # -- Download Pi OS image if needed --
 IMAGE_DIR="$REPO_ROOT/.cache"
@@ -199,6 +266,15 @@ ENCRYPTED_PASS=$(openssl passwd -6 "$PASSWORD")
 echo "${USERNAME}:${ENCRYPTED_PASS}" > "$BOOT_MOUNT/userconf.txt"
 ok "User '$USERNAME' configured"
 
+# -- Stage provisioning assets for first boot --
+INSTALLER_STAGING="$BOOT_MOUNT/boat-installer"
+rm -rf "$INSTALLER_STAGING"
+mkdir -p "$INSTALLER_STAGING"
+cp "$ASSET_DIR/repo-bundle.tar.gz" "$INSTALLER_STAGING/"
+cp "$ASSET_DIR/boat-firmware" "$INSTALLER_STAGING/"
+cp "$ASSET_DIR/mqtt.env" "$INSTALLER_STAGING/"
+ok "Provisioning assets staged for first boot"
+
 # -- Create firstrun.sh for headless setup --
 # This script runs once on first boot, then removes itself from cmdline.txt
 cat > "$BOOT_MOUNT/firstrun.sh" << 'FIRSTRUN_EOF'
@@ -206,13 +282,43 @@ cat > "$BOOT_MOUNT/firstrun.sh" << 'FIRSTRUN_EOF'
 set -e
 
 # --- Network ---
-# Configure WiFi via NetworkManager (Bookworm uses nmcli, not wpa_supplicant)
-if ! nmcli connection show "__WIFI_SSID__" &>/dev/null; then
-    nmcli device wifi connect "__WIFI_SSID__" password "__WIFI_PASS__" || true
-fi
+# Bookworm uses NetworkManager; keep client Wi-Fi, hotspot, and cellular under it.
+cat > /etc/default/boat-network << 'NETCFGEOF'
+WIFI_CLIENT_IFACE=wlan0
+WIFI_CLIENT_CONN_NAME=boat-uplink
+WIFI_CLIENT_SSID=__WIFI_SSID_SHELL__
+WIFI_CLIENT_PASS=__WIFI_PASS_SHELL__
+WIFI_CLIENT_PRIORITY=100
+WIFI_CLIENT_ROUTE_METRIC=200
+HOTSPOT_CONN_NAME=boat-hotspot
+HOTSPOT_SSID=__HOTSPOT_SSID_SHELL__
+HOTSPOT_PASS=__HOTSPOT_PASS_SHELL__
+HOTSPOT_VIF_IFACE=ap0
+HOTSPOT_BOOT_MODE=vif-only
+HOTSPOT_BAND=bg
+HOTSPOT_IPV4_CIDR=10.43.0.1/24
+MODEMMANAGER_ENABLE=1
+NETCFGEOF
+chmod 600 /etc/default/boat-network
+. /etc/default/boat-network
 
-# Disable WiFi power saving (prevents SSH dropouts)
-nmcli connection modify preconfigured wifi.powersave 2 2>/dev/null || true
+if [[ -n "$WIFI_CLIENT_SSID" ]]; then
+    if ! nmcli connection show "boat-uplink" &>/dev/null; then
+        nmcli connection add type wifi ifname wlan0 con-name "boat-uplink" ssid "$WIFI_CLIENT_SSID" || true
+    fi
+
+    nmcli connection modify "boat-uplink" \
+        connection.interface-name wlan0 \
+        connection.autoconnect yes \
+        connection.autoconnect-priority 100 \
+        802-11-wireless-security.key-mgmt wpa-psk \
+        802-11-wireless-security.psk "$WIFI_CLIENT_PASS" \
+        802-11-wireless.powersave 2 \
+        ipv4.route-metric 200 \
+        ipv6.route-metric 200 || true
+
+    nmcli connection up "boat-uplink" || true
+fi
 
 # --- Set hostname ---
 raspi-config nonint do_hostname "__HOSTNAME__"
@@ -232,6 +338,9 @@ apt-get install -y \
     python3-picamera2 \
     python3-serial \
     git \
+    iw \
+    dnsmasq-base \
+    modemmanager \
     picocom \
     watchdog
 
@@ -239,11 +348,7 @@ apt-get install -y \
 pip3 install --break-system-packages luma.oled 2>/dev/null || pip3 install luma.oled || true
 
 # --- EG25-G Quectel modem/GPS setup ---
-# Disable ModemManager — it grabs the AT port and blocks GPS/firmware access
-systemctl stop ModemManager 2>/dev/null || true
-systemctl disable ModemManager 2>/dev/null || true
-
-# udev rule: if ModemManager is ever re-enabled, ignore NMEA + AT ports
+# Keep ModemManager enabled for cellular, but leave GPS/NMEA ports free.
 mkdir -p /etc/udev/rules.d
 cat > /etc/udev/rules.d/99-eg25g-gps.rules << 'UDEVEOF'
 # Quectel EG25-G: let firmware own the NMEA and AT ports
@@ -251,6 +356,9 @@ SUBSYSTEM=="tty", KERNEL=="ttyUSB1", ATTRS{idVendor}=="2c7c", ENV{ID_MM_PORT_IGN
 SUBSYSTEM=="tty", KERNEL=="ttyUSB2", ATTRS{idVendor}=="2c7c", ENV{ID_MM_PORT_IGNORE}="1"
 UDEVEOF
 udevadm control --reload-rules 2>/dev/null || true
+udevadm trigger --subsystem-match=tty 2>/dev/null || true
+systemctl enable ModemManager 2>/dev/null || true
+systemctl restart ModemManager 2>/dev/null || true
 
 # --- Hardware watchdog ---
 # Enable the BCM2835 hardware watchdog — reboots the Pi if the system hangs
@@ -287,89 +395,82 @@ if ! grep -q 'dtoverlay=imx219' /boot/firmware/config.txt; then
     fi
 fi
 
-# --- Set up SSH deploy key for GitHub ---
+# --- Install staged BoatCore payload ---
 USER_HOME="/home/__USERNAME__"
-SSH_DIR="$USER_HOME/.ssh"
-mkdir -p "$SSH_DIR"
+INSTALL_STAGING="/boot/firmware/boat-installer"
+REPO_ARCHIVE="$INSTALL_STAGING/repo-bundle.tar.gz"
+FIRMWARE_ARTIFACT="$INSTALL_STAGING/boat-firmware"
+MQTT_ENV_ARTIFACT="$INSTALL_STAGING/mqtt.env"
 
-ssh-keygen -t ed25519 -f "$SSH_DIR/deploy_key" -N "" -q
-cat >> "$SSH_DIR/config" << 'SSHEOF'
-Host github.com
-  IdentityFile ~/.ssh/deploy_key
-  StrictHostKeyChecking accept-new
-SSHEOF
+rm -rf "$USER_HOME/AutonomousBoat"
+mkdir -p "$USER_HOME/AutonomousBoat"
+tar -xzf "$REPO_ARCHIVE" -C "$USER_HOME/AutonomousBoat"
+install -m 0755 "$FIRMWARE_ARTIFACT" "$USER_HOME/boat-firmware"
+install -m 0600 "$MQTT_ENV_ARTIFACT" "$USER_HOME/.env"
+chown -R __USERNAME__:__USERNAME__ "$USER_HOME/AutonomousBoat" "$USER_HOME/boat-firmware" "$USER_HOME/.env"
 
-chown -R __USERNAME__:__USERNAME__ "$SSH_DIR"
-chmod 700 "$SSH_DIR"
-chmod 600 "$SSH_DIR/deploy_key" "$SSH_DIR/config"
-chmod 644 "$SSH_DIR/deploy_key.pub"
-
-# --- Write MQTT env file ---
-cat > "$USER_HOME/.env" << 'ENVEOF'
-__MQTT_ENV__
-ENVEOF
-chown __USERNAME__:__USERNAME__ "$USER_HOME/.env"
-
-# --- Create the post-boot setup script ---
-# This script clones the repo and installs services (requires the deploy key to be
-# added to GitHub first, so it can't run automatically)
+# --- Create a local reinstall helper ---
 cat > "$USER_HOME/setup-boat.sh" << 'SETUPEOF'
 #!/bin/bash
 set -euo pipefail
 
-echo "==> BoatCore post-boot setup"
+echo "==> Reinstalling BoatCore services from the local checkout"
 
-# Clone repository
-if [[ ! -d ~/AutonomousBoat ]]; then
-    echo "==> Cloning AutonomousBoat repo..."
-    echo ""
-    echo "    IMPORTANT: First add your deploy key to GitHub:"
-    echo "    Settings -> Deploy keys -> Add deploy key"
-    echo ""
-    echo "    Your public key:"
-    cat ~/.ssh/deploy_key.pub
-    echo ""
-    read -rp "Press Enter after adding the key to GitHub... "
-    git clone git@github.com:robertkirk13/AutonomousBoat.git ~/AutonomousBoat
-else
-    echo "==> Repo already cloned, pulling latest..."
-    cd ~/AutonomousBoat && git pull
-fi
+sudo install -m 0755 ~/AutonomousBoat/scripts/boat-network.sh /usr/local/sbin/boat-network.sh
 
-# Install systemd services
-echo "==> Installing systemd services..."
-
-# Rewrite default home-directory paths to match the current login user.
-sed "s|/home/chuck|/home/$(whoami)|g" \
+sed "s|/home/chuck|$HOME|g" \
     ~/AutonomousBoat/deploy/systemd/boat-firmware.service | sudo tee /etc/systemd/system/boat-firmware.service > /dev/null
 
-sed "s|/home/chuck|/home/$(whoami)|g" \
+sed "s|/home/chuck|$HOME|g" \
     ~/AutonomousBoat/deploy/systemd/ssd1306-dashboard.service | sudo tee /etc/systemd/system/ssd1306-dashboard.service > /dev/null
 
-# Fix camera service paths for this user
-sed "s|/home/chuck|/home/$(whoami)|g; s|User=chuck|User=$(whoami)|" \
+sed "s|/home/chuck|$HOME|g; s|User=chuck|User=$USER|g" \
     ~/AutonomousBoat/deploy/systemd/camera-stream.service | sudo tee /etc/systemd/system/camera-stream.service > /dev/null
 
-sudo systemctl daemon-reload
-sudo systemctl enable boat-firmware ssd1306-dashboard camera-stream
+sudo cp ~/AutonomousBoat/deploy/systemd/boat-hotspot.service /etc/systemd/system/
+sudo /usr/local/sbin/boat-network.sh install
 
-echo "==> Services installed and enabled (will start on next boot or manually)."
-echo ""
-echo "    To start now:"
-echo "      sudo systemctl start boat-firmware"
-echo "      sudo systemctl start ssd1306-dashboard"
-echo "      sudo systemctl start camera-stream"
-echo ""
-echo "    To deploy firmware, run from your Mac:"
-echo "      cd firmware"
-echo "      cargo build --release --target aarch64-unknown-linux-gnu"
-echo "      scp target/aarch64-unknown-linux-gnu/release/boat-firmware __USERNAME__@__HOSTNAME__.local:~/"
-echo "      ssh __USERNAME__@__HOSTNAME__.local 'sudo systemctl restart boat-firmware'"
-echo ""
-echo "==> Setup complete!"
+sudo systemctl daemon-reload
+sudo systemctl enable boat-firmware ssd1306-dashboard camera-stream boat-hotspot
+
+if ! sudo systemctl start boat-hotspot; then
+    echo "==> Hotspot auto-start skipped (the Pi Wi-Fi radio may not support concurrent AP+client mode)."
+    echo "    You can still force AP takeover later with:"
+    echo "      sudo /usr/local/sbin/boat-network.sh hotspot-up takeover"
+fi
+
+sudo systemctl restart boat-firmware ssd1306-dashboard camera-stream
+echo "==> BoatCore services installed and started"
 SETUPEOF
 chmod +x "$USER_HOME/setup-boat.sh"
 chown __USERNAME__:__USERNAME__ "$USER_HOME/setup-boat.sh"
+
+# --- Install systemd services immediately ---
+install -m 0755 "$USER_HOME/AutonomousBoat/scripts/boat-network.sh" /usr/local/sbin/boat-network.sh
+
+sed "s|/home/chuck|$USER_HOME|g" \
+    "$USER_HOME/AutonomousBoat/deploy/systemd/boat-firmware.service" > /etc/systemd/system/boat-firmware.service
+
+sed "s|/home/chuck|$USER_HOME|g" \
+    "$USER_HOME/AutonomousBoat/deploy/systemd/ssd1306-dashboard.service" > /etc/systemd/system/ssd1306-dashboard.service
+
+sed "s|/home/chuck|$USER_HOME|g; s|User=chuck|User=__USERNAME__|g" \
+    "$USER_HOME/AutonomousBoat/deploy/systemd/camera-stream.service" > /etc/systemd/system/camera-stream.service
+
+cp "$USER_HOME/AutonomousBoat/deploy/systemd/boat-hotspot.service" /etc/systemd/system/
+/usr/local/sbin/boat-network.sh install
+
+systemctl daemon-reload
+systemctl enable boat-firmware ssd1306-dashboard camera-stream boat-hotspot
+
+if ! systemctl start boat-hotspot; then
+    echo "==> Hotspot auto-start skipped (the Pi Wi-Fi radio may not support concurrent AP+client mode)." >&2
+fi
+
+systemctl restart boat-firmware ssd1306-dashboard camera-stream
+
+# Remove staged artifacts after a successful install to free boot-partition space.
+rm -rf "$INSTALL_STAGING"
 
 # --- Clean up firstrun from cmdline.txt ---
 sed -i 's| systemd.run=/boot/firmware/firstrun.sh||' /boot/firmware/cmdline.txt
@@ -381,29 +482,19 @@ reboot
 FIRSTRUN_EOF
 
 # Substitute placeholders in firstrun.sh
-sed -i '' "s|__WIFI_SSID__|${WIFI_SSID}|g" "$BOOT_MOUNT/firstrun.sh"
-sed -i '' "s|__WIFI_PASS__|${WIFI_PASS}|g" "$BOOT_MOUNT/firstrun.sh"
-sed -i '' "s|__HOSTNAME__|${HOSTNAME}|g" "$BOOT_MOUNT/firstrun.sh"
-sed -i '' "s|__USERNAME__|${USERNAME}|g" "$BOOT_MOUNT/firstrun.sh"
+WIFI_SSID_SHELL_ESCAPED="$(escape_sed_replacement "$(quote_for_shell "$WIFI_SSID")")"
+WIFI_PASS_SHELL_ESCAPED="$(escape_sed_replacement "$(quote_for_shell "$WIFI_PASS")")"
+HOTSPOT_SSID_SHELL_ESCAPED="$(escape_sed_replacement "$(quote_for_shell "$HOTSPOT_SSID")")"
+HOTSPOT_PASS_SHELL_ESCAPED="$(escape_sed_replacement "$(quote_for_shell "$HOTSPOT_PASS")")"
+HOSTNAME_ESCAPED="$(escape_sed_replacement "$HOSTNAME")"
+USERNAME_ESCAPED="$(escape_sed_replacement "$USERNAME")"
 
-# Read MQTT env from firmware/.env
-MQTT_ENV=""
-if [[ -f "$REPO_ROOT/firmware/.env" ]]; then
-    MQTT_ENV=$(cat "$REPO_ROOT/firmware/.env")
-else
-    warn "firmware/.env not found — MQTT credentials will need to be set manually on the Pi"
-    MQTT_ENV="# MQTT credentials not configured — edit this file
-MQTT_HOST=
-MQTT_PORT=8883
-MQTT_USER=
-MQTT_PASS="
-fi
-# Escape for sed
-MQTT_ENV_ESCAPED=$(echo "$MQTT_ENV" | sed 's/[&/\]/\\&/g' | tr '\n' '\r')
-sed -i '' "s|__MQTT_ENV__|${MQTT_ENV_ESCAPED}|" "$BOOT_MOUNT/firstrun.sh"
-# Fix the \r back to newlines
-tr '\r' '\n' < "$BOOT_MOUNT/firstrun.sh" > "$BOOT_MOUNT/firstrun.sh.tmp"
-mv "$BOOT_MOUNT/firstrun.sh.tmp" "$BOOT_MOUNT/firstrun.sh"
+sed -i '' "s|__WIFI_SSID_SHELL__|${WIFI_SSID_SHELL_ESCAPED}|g" "$BOOT_MOUNT/firstrun.sh"
+sed -i '' "s|__WIFI_PASS_SHELL__|${WIFI_PASS_SHELL_ESCAPED}|g" "$BOOT_MOUNT/firstrun.sh"
+sed -i '' "s|__HOTSPOT_SSID_SHELL__|${HOTSPOT_SSID_SHELL_ESCAPED}|g" "$BOOT_MOUNT/firstrun.sh"
+sed -i '' "s|__HOTSPOT_PASS_SHELL__|${HOTSPOT_PASS_SHELL_ESCAPED}|g" "$BOOT_MOUNT/firstrun.sh"
+sed -i '' "s|__HOSTNAME__|${HOSTNAME_ESCAPED}|g" "$BOOT_MOUNT/firstrun.sh"
+sed -i '' "s|__USERNAME__|${USERNAME_ESCAPED}|g" "$BOOT_MOUNT/firstrun.sh"
 
 chmod +x "$BOOT_MOUNT/firstrun.sh"
 
@@ -428,14 +519,16 @@ ok "SD card is ready!"
 echo ""
 echo "  Next steps:"
 echo "  1. Insert the SD card into the Pi and power it on"
-echo "  2. Wait 3-5 minutes for first-boot setup (packages install, reboot)"
-echo "  3. SSH in:  ssh ${USERNAME}@${HOSTNAME}.local"
-echo "  4. Run:     ~/setup-boat.sh"
-echo "     (This will prompt you to add the deploy key to GitHub, then clones the repo"
-echo "      and installs all systemd services)"
-echo "  5. Deploy firmware from your Mac:"
-echo "     cd firmware"
-echo "     cargo build --release --target aarch64-unknown-linux-gnu"
-echo "     scp target/aarch64-unknown-linux-gnu/release/boat-firmware ${USERNAME}@${HOSTNAME}.local:~/"
-echo "     ssh ${USERNAME}@${HOSTNAME}.local 'sudo systemctl restart boat-firmware'"
+echo "  2. Wait 5-10 minutes for first-boot setup, package install, service install, and reboot"
+if [[ -n "$WIFI_SSID" ]]; then
+    echo "  3. Once it comes back, it should already be running on ${WIFI_SSID} and/or the hotspot below"
+else
+    echo "  3. It will come up on the hotspot below, and can later use cellular or takeover mode"
+fi
+echo "  4. Optional direct-attach hotspot:"
+echo "     SSID:     ${HOTSPOT_SSID}"
+echo "     Password: ${HOTSPOT_PASS}"
+echo "     Pi IP:    10.43.0.1"
+echo "  5. If you ever want to reinstall services from the local checkout on the Pi:"
+echo "     ~/setup-boat.sh"
 echo ""

@@ -4,12 +4,22 @@ Autonomous boat firmware (Rust/tokio) + React dashboard for Raspberry Pi Zero 2W
 
 ## Repo Layout
 
-- `firmware/` - Rust firmware for the boat controller
-- `dashboard/` - React dashboard for live telemetry
-- `simulator/` - simulator UI and support code
-- `scripts/` - hardware bring-up, diagnostics, and service helper scripts
-- `deploy/systemd/` - systemd unit files for Pi services
-- `docs/` - deployment notes and hardware reference docs
+- [`dashboard/`](dashboard/README.md) - React telemetry dashboard
+- [`firmware/`](firmware/README.md) - Rust boat controller firmware
+- [`simulator/`](simulator/README.md) - lightweight browser simulator and MQTT visualizer
+- [`scripts/`](scripts/README.md) - Pi provisioning, diagnostics, and helper scripts
+- [`deploy/`](deploy/README.md) - deployment templates and service assets
+- [`docs/`](docs/README.md) - setup, deploy, and hardware notes
+- [`sensorboard/`](sensorboard/README.md) - ESP-IDF experiments for the auxiliary sensor board
+
+Each major subdirectory has its own README with local build, run, or deployment notes.
+
+## Setup Docs
+
+- Fresh Pi provisioning: [`docs/setup.md`](docs/setup.md)
+- Firmware and service deployment: [`docs/DEPLOY.md`](docs/DEPLOY.md)
+- EG25-G modem and GPS notes: [`docs/EG25G-GPS.md`](docs/EG25G-GPS.md)
+- CAN bus frame map: [`docs/CAN.md`](docs/CAN.md)
 
 ## Hardware
 
@@ -41,6 +51,8 @@ Autonomous boat firmware (Rust/tokio) + React dashboard for Raspberry Pi Zero 2W
 
 | Pin    | Function       |
 |--------|----------------|
+| GPIO12 | Left ESC PWM0  |
+| GPIO13 | Right ESC PWM1 |
 | GPIO18 | Fan PWM        |
 
 ### INA228 Calibration
@@ -53,8 +65,22 @@ Autonomous boat firmware (Rust/tokio) + React dashboard for Raspberry Pi Zero 2W
 
 - MCP2515 with 16 MHz crystal
 - 500 kbps (CNF1=0x01, CNF2=0x91, CNF3=0x01)
+- motor commands are mirrored onto CAN when the bus is present, but the primary ESC throttle path is hardware PWM on GPIO12/GPIO13
+- protocol reference and ID map: [`docs/CAN.md`](docs/CAN.md)
 
 ## New Board Setup
+
+For a fresh Pi, the recommended path is:
+
+```bash
+./scripts/flash-sd.sh
+# boot the Pi, ssh in, then run:
+~/setup-boat.sh
+```
+
+That path provisions the SD card, installs the base packages, optionally seeds a NetworkManager client profile, writes hotspot settings, keeps cellular-compatible ModemManager/GPS rules in place, rewrites the systemd unit paths for the current Pi username, and leaves the repo ready for firmware deploys. If you want to do it by hand instead, use [`docs/setup.md`](docs/setup.md).
+
+After `~/setup-boat.sh`, the Pi will try to expose its own hotspot alongside client Wi-Fi on a separate AP interface when the radio supports it. If the built-in radio cannot do concurrent AP + client, you can still force a manual hotspot takeover later with `sudo /usr/local/sbin/boat-network.sh hotspot-up takeover`.
 
 ### 1. Flash Raspberry Pi OS
 
@@ -98,6 +124,8 @@ iwconfig wlan0  # should show "Power Management:off"
 sudo apt update
 sudo apt install -y i2c-tools python3-smbus2 python3-spidev python3-gpiod git
 ```
+
+For the fuller package list, camera support, watchdog setup, and GPS serial tooling, use [`docs/setup.md`](docs/setup.md) or the automated `./scripts/flash-sd.sh` path above.
 
 ### 6. Set up SSH deploy key and clone repo
 
@@ -173,6 +201,8 @@ sudo systemctl enable ssd1306-dashboard
 sudo systemctl start ssd1306-dashboard
 ```
 
+If your Pi username is not `chuck`, use the path-rewrite install commands in [`docs/DEPLOY.md`](docs/DEPLOY.md) or [`deploy/systemd/README.md`](deploy/systemd/README.md) instead of copying the unit verbatim.
+
 Check status:
 ```bash
 sudo systemctl status ssd1306-dashboard
@@ -188,12 +218,7 @@ cd firmware
 cargo build --release --target aarch64-unknown-linux-gnu
 ```
 
-Or using cross:
-
-```bash
-cargo install cross
-cross build --release --target aarch64-unknown-linux-gnu
-```
+On macOS ARM, prefer `cargo` with the GNU cross-linker. See [`docs/DEPLOY.md`](docs/DEPLOY.md) for the full toolchain notes.
 
 Copy the binary to the Pi:
 
@@ -217,6 +242,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable boat-firmware
 sudo systemctl start boat-firmware
 ```
+
+As with the OLED unit, use the rewrite-based install path from [`docs/DEPLOY.md`](docs/DEPLOY.md) if the Pi uses a different username.
 
 Check status:
 ```bash
