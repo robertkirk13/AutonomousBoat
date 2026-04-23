@@ -68,6 +68,8 @@ prepare_repo_archive() {
         --exclude='simulator/node_modules' \
         --exclude='dashboard/dist' \
         --exclude='simulator/dist' \
+        --exclude='macos/BoatProvisioner/build' \
+        --exclude='macos/BoatProvisioner/.build' \
         -czf "$REPO_ARCHIVE_OUT" \
         -C "$REPO_ROOT" .
 }

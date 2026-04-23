@@ -4,6 +4,11 @@ import { useNavigation } from '../context/NavigationContext';
 type LeafletModule = typeof import('leaflet');
 type ReactLeafletModule = typeof import('react-leaflet');
 
+const GPS_CALIBRATION_SAMPLES = 5;
+const GPS_CALIBRATION_INTERVAL_MS = 1000;
+
+type GpsCalibrationPhase = 'idle' | 'sampling' | 'done' | 'error';
+
 export default function MapView() {
   const { boat, mission, addWaypoint } = useNavigation();
   const [modules, setModules] = useState<{
@@ -61,9 +66,29 @@ interface MapContentProps {
 
 function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
   const { MapContainer, TileLayer, Marker, Polyline, Polygon, useMapEvents } = RL;
-  const { mapCenter, setMapCenter, waypointMode, areaCoverage, addPolygonVertex, controlMode } = useNavigation();
+  const {
+    mapCenter,
+    setMapCenter,
+    waypointMode,
+    areaCoverage,
+    addPolygonVertex,
+    controlMode,
+    adjustGpsOffset,
+    clearGpsOffset,
+    registerGpsCalibrationTrigger,
+    registerGpsCalibrationResetTrigger,
+  } = useNavigation();
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [mapMode, setMapMode] = useState<'map' | 'satellite'>('map');
+  const [gpsCalibration, setGpsCalibration] = useState<{
+    phase: GpsCalibrationPhase;
+    samples: number;
+    message: string | null;
+  }>({
+    phase: 'idle',
+    samples: 0,
+    message: null,
+  });
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -101,12 +126,138 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
   }, [mission.status, waypointMode, controlMode, addWaypoint, addPolygonVertex]);
 
   const mapRef = useRef<L.Map | null>(null);
+  const boatPositionRef = useRef(boat.position);
+  const calibrationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const calibrationMessageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevBoatOnlineRef = useRef(false);
+  const hasSnappedToUserRef = useRef(false);
+
+  boatPositionRef.current = boat.position;
 
   useEffect(() => {
     if (mapRef.current) {
       mapRef.current.setView([mapCenter.lat, mapCenter.lng], mapRef.current.getZoom());
     }
   }, [mapCenter]);
+
+  // Snap to the boat whenever it transitions from offline to online.
+  useEffect(() => {
+    if (boat.boatOnline && !prevBoatOnlineRef.current) {
+      setMapCenter(boatPositionRef.current.lat, boatPositionRef.current.lng);
+    }
+    prevBoatOnlineRef.current = boat.boatOnline;
+  }, [boat.boatOnline, setMapCenter]);
+
+  // Snap to the user's location the first time we get it, if no boat is online.
+  useEffect(() => {
+    if (userLocation && !hasSnappedToUserRef.current && !boat.boatOnline) {
+      hasSnappedToUserRef.current = true;
+      setMapCenter(userLocation.lat, userLocation.lng);
+    }
+  }, [userLocation, boat.boatOnline, setMapCenter]);
+
+  useEffect(() => {
+    return () => {
+      if (calibrationIntervalRef.current) {
+        clearInterval(calibrationIntervalRef.current);
+      }
+      if (calibrationMessageTimeoutRef.current) {
+        clearTimeout(calibrationMessageTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const setCalibrationBanner = useCallback((phase: GpsCalibrationPhase, samples: number, message: string) => {
+    if (calibrationMessageTimeoutRef.current) {
+      clearTimeout(calibrationMessageTimeoutRef.current);
+      calibrationMessageTimeoutRef.current = null;
+    }
+    setGpsCalibration({ phase, samples, message });
+    if (phase === 'done' || phase === 'error') {
+      calibrationMessageTimeoutRef.current = setTimeout(() => {
+        setGpsCalibration({ phase: 'idle', samples: 0, message: null });
+        calibrationMessageTimeoutRef.current = null;
+      }, 5000);
+    }
+  }, []);
+
+  const startGpsCalibration = useCallback(() => {
+    if (!boat.boatOnline) {
+      setCalibrationBanner('error', 0, 'Boat must be online to calibrate GPS.');
+      return;
+    }
+
+    const center = mapRef.current?.getCenter();
+    if (!center) {
+      setCalibrationBanner('error', 0, 'Map center is unavailable right now.');
+      return;
+    }
+
+    if (calibrationIntervalRef.current) {
+      clearInterval(calibrationIntervalRef.current);
+      calibrationIntervalRef.current = null;
+    }
+
+    const target = { lat: center.lat, lng: center.lng };
+    const samples: Array<{ lat: number; lng: number }> = [];
+
+    const collectSample = () => {
+      samples.push({ ...boatPositionRef.current });
+
+      if (samples.length >= GPS_CALIBRATION_SAMPLES) {
+        if (calibrationIntervalRef.current) {
+          clearInterval(calibrationIntervalRef.current);
+          calibrationIntervalRef.current = null;
+        }
+
+        const avgLat = samples.reduce((sum, sample) => sum + sample.lat, 0) / samples.length;
+        const avgLng = samples.reduce((sum, sample) => sum + sample.lng, 0) / samples.length;
+        const deltaLat = target.lat - avgLat;
+        const deltaLng = target.lng - avgLng;
+        const northMeters = deltaLat * 111_320;
+        const eastMeters = deltaLng * 111_320 * Math.cos(target.lat * Math.PI / 180);
+        const correctionMeters = Math.hypot(northMeters, eastMeters);
+
+        adjustGpsOffset(deltaLat, deltaLng);
+        setCalibrationBanner('done', samples.length, `GPS aligned to map center. Applied ${correctionMeters.toFixed(1)} m correction.`);
+        return;
+      }
+
+      setGpsCalibration({
+        phase: 'sampling',
+        samples: samples.length,
+        message: `Hold the boat still while GPS is averaged (${samples.length}/${GPS_CALIBRATION_SAMPLES}).`,
+      });
+    };
+
+    setGpsCalibration({
+      phase: 'sampling',
+      samples: 0,
+      message: 'Hold the boat still while GPS is averaged (0/5).',
+    });
+
+    collectSample();
+    calibrationIntervalRef.current = setInterval(collectSample, GPS_CALIBRATION_INTERVAL_MS);
+  }, [adjustGpsOffset, boat.boatOnline, setCalibrationBanner]);
+
+  useEffect(() => {
+    registerGpsCalibrationTrigger(startGpsCalibration);
+    return () => registerGpsCalibrationTrigger(null);
+  }, [registerGpsCalibrationTrigger, startGpsCalibration]);
+
+  const resetGpsCalibration = useCallback(() => {
+    if (calibrationIntervalRef.current) {
+      clearInterval(calibrationIntervalRef.current);
+      calibrationIntervalRef.current = null;
+    }
+    clearGpsOffset();
+    setCalibrationBanner('done', 0, 'GPS offset cleared.');
+  }, [clearGpsOffset, setCalibrationBanner]);
+
+  useEffect(() => {
+    registerGpsCalibrationResetTrigger(resetGpsCalibration);
+    return () => registerGpsCalibrationResetTrigger(null);
+  }, [registerGpsCalibrationResetTrigger, resetGpsCalibration]);
 
   const userLocationIcon = useMemo(() => {
     return L.divIcon({
@@ -128,36 +279,15 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
     return L.divIcon({
       className: 'boat-marker',
       html: `
-        <div style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;transform:rotate(${boat.heading}deg);">
-          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <!-- Outer glow -->
-            <defs>
-              <radialGradient id="boat-glow" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stop-color="${accent}" stop-opacity="0.25"/>
-                <stop offset="100%" stop-color="${accent}" stop-opacity="0"/>
-              </radialGradient>
-              <filter id="boat-shadow" x="-20%" y="-20%" width="140%" height="140%">
-                <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
-              </filter>
-            </defs>
-            <circle cx="24" cy="24" r="20" fill="url(#boat-glow)"/>
-            <!-- Heading cone -->
-            <path d="M24 4 L20 16 L28 16 Z" fill="${accent}" opacity="0.2"/>
-            <!-- Hull -->
-            <path d="M24 8 L17 28 C17 32 19 36 24 38 C29 36 31 32 31 28 Z" fill="rgba(20,22,30,0.9)" stroke="rgba(255,255,255,0.6)" stroke-width="1.2" stroke-linejoin="round" filter="url(#boat-shadow)"/>
-            <!-- Keel line -->
-            <line x1="24" y1="12" x2="24" y2="34" stroke="rgba(255,255,255,0.12)" stroke-width="0.8"/>
-            <!-- Deck -->
-            <ellipse cx="24" cy="24" rx="4.5" ry="7" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.15)" stroke-width="0.6"/>
-            <!-- Bow accent -->
-            <circle cx="24" cy="13" r="2" fill="${accent}" opacity="0.9"/>
-            <!-- Stern marks -->
-            <line x1="20" y1="32" x2="28" y2="32" stroke="rgba(255,255,255,0.2)" stroke-width="0.6" stroke-linecap="round"/>
+        <div style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;">
+          <div style="position:absolute;width:14px;height:14px;border-radius:50%;background:rgba(20,22,30,0.85);border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.45);"></div>
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(${boat.heading}deg);">
+            <path d="M20 4 L15 12 L25 12 Z" fill="${accent}" stroke="white" stroke-width="1.2" stroke-linejoin="round"/>
           </svg>
         </div>
       `,
-      iconSize: [56, 56],
-      iconAnchor: [28, 28],
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
     });
   }, [L, boat.heading]);
 
@@ -207,7 +337,7 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
   return (
     <div className="w-full h-full relative">
       <MapContainer
-        center={[boat.position.lat, boat.position.lng]}
+        center={[mapCenter.lat, mapCenter.lng]}
         zoom={15}
         className="w-full h-full"
         style={{ background: '#1a1a1a' }}
@@ -277,28 +407,45 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
         )}
       </MapContainer>
 
-      <div className="absolute top-3 right-[16.5rem] z-[500] flex gap-2">
-        <button
-          type="button"
-          onClick={() => setMapCenter(boat.position.lat, boat.position.lng)}
-          className="bg-panel/70 backdrop-blur-xl rounded-lg px-3 py-1.5 border border-panel-border/50 hover:bg-panel/90 transition-colors text-xs text-white/50 hover:text-white/70"
-          title="Center on boat"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="Center on boat">
-            <title>Center on boat</title>
-            <circle cx="12" cy="12" r="3" />
-            <line x1="12" y1="2" x2="12" y2="6" />
-            <line x1="12" y1="18" x2="12" y2="22" />
-            <line x1="2" y1="12" x2="6" y2="12" />
-            <line x1="18" y1="12" x2="22" y2="12" />
-          </svg>
-        </button>
-        <button
-          onClick={() => setMapMode(mapMode === 'map' ? 'satellite' : 'map')}
-          className="bg-panel/70 backdrop-blur-xl rounded-lg px-3 py-1.5 border border-panel-border/50 hover:bg-panel/90 transition-colors text-xs text-white/50 hover:text-white/70"
-        >
-          {mapMode === 'map' ? 'Satellite' : 'Map'}
-        </button>
+      <div className="pointer-events-none absolute inset-0 z-[450] flex items-center justify-center">
+        <div className="relative">
+          <div className="absolute left-1/2 top-1/2 h-8 w-px -translate-x-1/2 -translate-y-1/2 bg-amber-300/55" />
+          <div className="absolute left-1/2 top-1/2 h-px w-8 -translate-x-1/2 -translate-y-1/2 bg-amber-300/55" />
+          <div className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-amber-300/70 bg-amber-300/8" />
+        </div>
+      </div>
+
+      <div className="absolute top-3 right-[16.5rem] z-[500] flex flex-col items-end gap-2">
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setMapCenter(boat.position.lat, boat.position.lng)}
+            className="bg-panel/70 backdrop-blur-xl rounded-lg px-3 py-1.5 border border-panel-border/50 hover:bg-panel/90 transition-colors text-xs text-white/50 hover:text-white/70"
+            title="Center on boat"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="Center on boat">
+              <title>Center on boat</title>
+              <circle cx="12" cy="12" r="3" />
+              <line x1="12" y1="2" x2="12" y2="6" />
+              <line x1="12" y1="18" x2="12" y2="22" />
+              <line x1="2" y1="12" x2="6" y2="12" />
+              <line x1="18" y1="12" x2="22" y2="12" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMapMode(mapMode === 'map' ? 'satellite' : 'map')}
+            className="bg-panel/70 backdrop-blur-xl rounded-lg px-3 py-1.5 border border-panel-border/50 hover:bg-panel/90 transition-colors text-xs text-white/50 hover:text-white/70"
+          >
+            {mapMode === 'map' ? 'Satellite' : 'Map'}
+          </button>
+        </div>
+
+        {gpsCalibration.message && (
+          <div className="max-w-[18rem] rounded-xl border border-panel-border/50 bg-panel/72 px-3 py-2 text-[10px] leading-relaxed text-white/45 backdrop-blur-xl">
+            {gpsCalibration.message}
+          </div>
+        )}
       </div>
     </div>
   );

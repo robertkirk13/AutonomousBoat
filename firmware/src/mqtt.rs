@@ -18,8 +18,19 @@ struct StatusMessage {
 #[serde(tag = "action", rename_all = "snake_case")]
 enum CommandMessage {
     Reboot,
-    GpsAdjustOffset { delta_lat: f64, delta_lon: f64 },
+    GpsAdjustOffset {
+        delta_lat: f64,
+        delta_lon: f64,
+    },
     GpsClearOffset,
+    CameraSet {
+        enabled: bool,
+        width: u32,
+        height: u32,
+        fps: u32,
+    },
+    MotorReinit,
+    MotorCalibrate,
 }
 
 pub struct MqttConfig {
@@ -49,9 +60,13 @@ pub async fn run(
     gps_rx: watch::Receiver<GpsPosition>,
     nav_rx: watch::Receiver<NavState>,
     payload_rx: watch::Receiver<PayloadSensorState>,
+    camera_rx: watch::Receiver<CameraSettings>,
     mission_tx: watch::Sender<Mission>,
     teleop_tx: watch::Sender<MotorCommand>,
     gps_offset_tx: watch::Sender<GpsOffset>,
+    camera_tx: watch::Sender<CameraSettings>,
+    motor_reinit_tx: watch::Sender<u64>,
+    motor_cal_tx: watch::Sender<u64>,
     cancel: CancellationToken,
 ) {
     let mut opts = MqttOptions::new("boat-firmware", &config.host, config.port);
@@ -80,6 +95,9 @@ pub async fn run(
     let mission_tx_clone = mission_tx.clone();
     let teleop_tx_clone = teleop_tx.clone();
     let gps_offset_tx_clone = gps_offset_tx.clone();
+    let camera_tx_clone = camera_tx.clone();
+    let motor_reinit_tx_clone = motor_reinit_tx.clone();
+    let motor_cal_tx_clone = motor_cal_tx.clone();
     let client_sub = client.clone();
     let eventloop_handle = tokio::spawn(async move {
         let mut subscribed = false;
@@ -145,11 +163,36 @@ pub async fn run(
                                         let _ = gps_offset_tx_clone.send(GpsOffset::default());
                                         tracing::info!("Cleared GPS offset calibration");
                                     }
+                                    Ok(CommandMessage::CameraSet { enabled, width, height, fps }) => {
+                                        let next = CameraSettings { enabled, width, height, fps };
+                                        if camera_tx_clone.borrow().clone() == next {
+                                            tracing::debug!("Camera settings unchanged; ignoring");
+                                        } else {
+                                            tracing::info!(
+                                                "Camera set: enabled={enabled} {width}x{height}@{fps}"
+                                            );
+                                            let _ = camera_tx_clone.send(next);
+                                        }
+                                    }
+                                    Ok(CommandMessage::MotorReinit) => {
+                                        // Monotonically bump a counter so the motor task's
+                                        // watch::Receiver always sees a change, even on
+                                        // repeated reinit requests.
+                                        let next = motor_reinit_tx_clone.borrow().wrapping_add(1);
+                                        let _ = motor_reinit_tx_clone.send(next);
+                                        tracing::info!("Motor reinit requested via MQTT (seq {next})");
+                                    }
+                                    Ok(CommandMessage::MotorCalibrate) => {
+                                        let next = motor_cal_tx_clone.borrow().wrapping_add(1);
+                                        let _ = motor_cal_tx_clone.send(next);
+                                        tracing::warn!("Motor endpoint calibration requested via MQTT (seq {next}) — props MUST be off");
+                                    }
                                     Err(e) => {
                                         tracing::warn!("Failed to parse command: {e}");
                                     }
                                 }
                             }
+                        }
                         Ok(_) => {}
                         Err(e) => {
                             tracing::warn!("MQTT connection error: {e}");
@@ -170,9 +213,15 @@ pub async fn run(
     let mut thermal_rx = thermal_rx;
     let mut nav_rx = nav_rx;
     let mut payload_rx = payload_rx;
+    let mut camera_rx = camera_rx;
     let mut status_interval = tokio::time::interval(MQTT_STATUS_INTERVAL);
     let mut imu_interval = tokio::time::interval(MQTT_IMU_INTERVAL);
     let mut gps_interval = tokio::time::interval(GPS_INTERVAL);
+
+    // Publish initial camera state so late-connecting dashboards get it
+    // without having to wait for the next change.
+    let initial_camera = camera_rx.borrow().clone();
+    publish_retained_json(&client, TOPIC_CAMERA, &initial_camera).await;
 
     loop {
         tokio::select! {
@@ -227,6 +276,15 @@ pub async fn run(
                 }
             }
 
+            result = camera_rx.changed() => {
+                if result.is_err() {
+                    tracing::warn!("Camera channel closed, stopping camera publishes");
+                } else {
+                    let state = camera_rx.borrow_and_update().clone();
+                    publish_retained_json(&client, TOPIC_CAMERA, &state).await;
+                }
+            }
+
             _ = status_interval.tick() => {
                 let msg = StatusMessage {
                     uptime_secs: start.elapsed().as_secs(),
@@ -242,9 +300,23 @@ pub async fn run(
 }
 
 async fn publish_json<T: Serialize>(client: &AsyncClient, topic: &str, payload: &T) {
+    publish_with_retain(client, topic, payload, false).await;
+}
+
+async fn publish_retained_json<T: Serialize>(client: &AsyncClient, topic: &str, payload: &T) {
+    publish_with_retain(client, topic, payload, true).await;
+}
+
+async fn publish_with_retain<T: Serialize>(
+    client: &AsyncClient,
+    topic: &str,
+    payload: &T,
+    retain: bool,
+) {
     match serde_json::to_vec(payload) {
         Ok(bytes) => {
-            if let Err(e) = client.publish(topic, QoS::AtMostOnce, false, bytes).await {
+            let qos = if retain { QoS::AtLeastOnce } else { QoS::AtMostOnce };
+            if let Err(e) = client.publish(topic, qos, retain, bytes).await {
                 tracing::warn!("MQTT publish error on {topic}: {e}");
             }
         }

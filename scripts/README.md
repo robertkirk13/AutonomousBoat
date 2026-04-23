@@ -9,6 +9,7 @@ Helper scripts for provisioning, hardware bring-up, and service-side utilities. 
 - Display helpers: `check_ssd1306.py`, `ssd1306.py`, `ssd1306_shutdown.py`, `reset_ssd1306.py`
 - CAN helpers: `check_can.py`, `listen_can.py`
 - Camera helper: `camera_stream.py`
+- Service helpers: `estop_monitor.py`
 - GPIO and stress tests: `toggle_gpio21.py`, `toggle_all_gpios.py`, `cpu_load.py`, `debug_i2c.py`
 
 ## Usage Notes

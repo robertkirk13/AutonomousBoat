@@ -73,14 +73,15 @@ Each major subdirectory has its own README with local build, run, or deployment 
 For a fresh Pi, the recommended path is:
 
 ```bash
-./scripts/flash-sd.sh
-# boot the Pi, ssh in, then run:
-~/setup-boat.sh
+./macos/BoatProvisioner/build-app.sh
+open ./macos/BoatProvisioner/build/BoatProvisioner.app
 ```
 
-That path provisions the SD card, installs the base packages, optionally seeds a NetworkManager client profile, writes hotspot settings, keeps cellular-compatible ModemManager/GPS rules in place, rewrites the systemd unit paths for the current Pi username, and leaves the repo ready for firmware deploys. If you want to do it by hand instead, use [`docs/setup.md`](docs/setup.md).
+If you prefer the shell path, `./scripts/flash-sd.sh` still works too.
 
-After `~/setup-boat.sh`, the Pi will try to expose its own hotspot alongside client Wi-Fi on a separate AP interface when the radio supports it. If the built-in radio cannot do concurrent AP + client, you can still force a manual hotspot takeover later with `sudo /usr/local/sbin/boat-network.sh hotspot-up takeover`.
+Both paths provision the SD card, stage the current repo and firmware onto it, install the base packages, optionally seed a NetworkManager client profile, write hotspot settings, keep cellular-compatible ModemManager/GPS rules in place, and fully install the services on first boot. If you want to do it by hand instead, use [`docs/setup.md`](docs/setup.md).
+
+After first boot, the Pi will try to expose its own hotspot alongside client Wi-Fi on a separate AP interface when the radio supports it. If the built-in radio cannot do concurrent AP + client, you can still force a manual hotspot takeover later with `sudo /usr/local/sbin/boat-network.sh hotspot-up takeover`. `~/setup-boat.sh` remains on the Pi as a local reinstall helper if you ever want to reapply the service install.
 
 ### 1. Flash Raspberry Pi OS
 

@@ -27,6 +27,7 @@ pub async fn run(
     #[cfg(not(feature = "hw"))]
     {
         drop(gps_tx);
+        let _ = gps_offset_rx;
         tracing::info!("GPS task disabled (sim mode)");
         cancel.cancelled().await;
     }
@@ -115,6 +116,7 @@ fn run_blocking(
     let gps_offset_rx = gps_offset_rx;
     let mut line = String::new();
     let mut fix_count: u64 = 0;
+    let mut last_sats: u8 = 0;
 
     while !cancel.is_cancelled() {
         line.clear();
@@ -122,23 +124,35 @@ fn run_blocking(
             Ok(0) => continue,
             Ok(_) => {
                 let trimmed = line.trim();
-                // Parse $GNRMC or $GPRMC sentences
                 if trimmed.starts_with("$GNRMC") || trimmed.starts_with("$GPRMC") {
                     if let Some(mut pos) = parse_rmc(trimmed) {
                         let offset = gps_offset_rx.borrow().clone();
                         pos.lat += offset.lat;
                         pos.lon += offset.lon;
+                        pos.satellites = last_sats;
                         pos.timestamp = Some(Instant::now());
                         fix_count += 1;
                         if fix_count == 1 {
                             tracing::info!(
-                                "GPS first fix: {:.6}, {:.6} ({:.1} m/s)",
+                                "GPS first fix: {:.6}, {:.6} ({:.1} m/s, {} sats)",
                                 pos.lat,
                                 pos.lon,
-                                pos.speed_mps
+                                pos.speed_mps,
+                                pos.satellites,
                             );
                         }
                         let _ = gps_tx.send(pos);
+                    }
+                } else if trimmed.starts_with("$GNGGA") || trimmed.starts_with("$GPGGA") {
+                    if let Some(sats) = parse_gga_sats(trimmed) {
+                        if sats != last_sats {
+                            last_sats = sats;
+                            // Re-emit the most recent position with the updated sat count so
+                            // the dashboard can show satellite visibility even before first fix.
+                            let mut pos = gps_tx.borrow().clone();
+                            pos.satellites = sats;
+                            let _ = gps_tx.send(pos);
+                        }
                     }
                 }
             }
@@ -181,8 +195,20 @@ fn parse_rmc(sentence: &str) -> Option<GpsPosition> {
         lat,
         lon,
         speed_mps,
+        satellites: 0,
         timestamp: None,
     })
+}
+
+/// Parse the satellite count from a $GPGGA or $GNGGA sentence.
+/// Format: $GNGGA,time,lat,N,lon,E,fix_quality,num_sats,hdop,altitude,...
+fn parse_gga_sats(sentence: &str) -> Option<u8> {
+    let data = sentence.split('*').next()?;
+    let fields: Vec<&str> = data.split(',').collect();
+    if fields.len() < 8 {
+        return None;
+    }
+    fields[7].parse::<u8>().ok()
 }
 
 /// Parse NMEA coordinate (DDMM.MMMMM format) with N/S or E/W hemisphere.
@@ -227,6 +253,18 @@ mod tests {
     fn test_parse_rmc_void() {
         let sentence = "$GNRMC,123456.00,V,,,,,,,120326,,,N*00";
         assert!(parse_rmc(sentence).is_none());
+    }
+
+    #[test]
+    fn test_parse_gga_sats() {
+        let sentence = "$GNGGA,123456.00,4740.12345,N,12219.98765,W,1,09,0.9,51.2,M,-19.5,M,,*47";
+        assert_eq!(parse_gga_sats(sentence), Some(9));
+    }
+
+    #[test]
+    fn test_parse_gga_sats_no_fix() {
+        let sentence = "$GNGGA,,,,,,0,00,,,M,,M,,*66";
+        assert_eq!(parse_gga_sats(sentence), Some(0));
     }
 
     #[test]

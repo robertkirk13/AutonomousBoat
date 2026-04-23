@@ -11,6 +11,7 @@ Usage:
 import argparse
 import io
 import logging
+import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -86,12 +87,25 @@ class StreamHandler(BaseHTTPRequestHandler):
         log.debug(format, *args)
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        log.warning("Ignoring non-integer %s=%r; using default %d", name, raw, default)
+        return default
+
+
 def main():
+    # Defaults are sourced from env first so the firmware-managed env file
+    # (CAMERA_WIDTH/CAMERA_HEIGHT/CAMERA_FPS) takes effect; CLI flags still win.
     parser = argparse.ArgumentParser(description="Pi Camera MJPEG Streamer")
-    parser.add_argument("--port", type=int, default=8554, help="HTTP port (default 8554)")
-    parser.add_argument("--width", type=int, default=640)
-    parser.add_argument("--height", type=int, default=480)
-    parser.add_argument("--fps", type=int, default=15)
+    parser.add_argument("--port", type=int, default=_env_int("CAMERA_PORT", 8554), help="HTTP port (default 8554)")
+    parser.add_argument("--width", type=int, default=_env_int("CAMERA_WIDTH", 640))
+    parser.add_argument("--height", type=int, default=_env_int("CAMERA_HEIGHT", 480))
+    parser.add_argument("--fps", type=int, default=_env_int("CAMERA_FPS", 15))
     args = parser.parse_args()
 
     output = StreamingOutput()

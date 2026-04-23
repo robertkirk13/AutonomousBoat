@@ -314,6 +314,7 @@ mod tests {
             lat: 47.6,
             lon: -122.3,
             speed_mps: 0.0,
+            satellites: 0,
             timestamp: Some(now - GPS_STALE_TIMEOUT - Duration::from_millis(1)),
         };
 

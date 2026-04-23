@@ -1,4 +1,5 @@
 pub mod can;
+pub mod camera;
 pub mod display;
 pub mod gps;
 pub mod imu;

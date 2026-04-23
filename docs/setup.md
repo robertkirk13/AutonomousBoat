@@ -7,10 +7,13 @@ This document covers first-time provisioning of a Raspberry Pi for the boat cont
 From a macOS development machine:
 
 ```bash
-./scripts/flash-sd.sh
+./macos/BoatProvisioner/build-app.sh
+open ./macos/BoatProvisioner/build/BoatProvisioner.app
 ```
 
-That script:
+If you prefer the script directly, `./scripts/flash-sd.sh` still works.
+
+That provisioning path:
 
 - flashes Raspberry Pi OS Lite
 - creates the user and enables SSH
@@ -19,18 +22,21 @@ That script:
 - seeds NetworkManager with the uplink Wi-Fi profile when one is provided
 - writes `/etc/default/boat-network` for the onboard hotspot
 - keeps ModemManager enabled while reserving the EG25-G GPS ports
-- writes `~/.env` from `firmware/.env`
-- prepares a `~/setup-boat.sh` helper on the Pi
-- rewrites the systemd unit paths for the chosen Pi username
+- stages the current repo, firmware binary, and MQTT env on the card
+- installs the systemd services automatically on first boot
+- leaves `~/setup-boat.sh` on the Pi as a local reinstall helper
 
-After the Pi boots:
+After the Pi boots, wait for the first-boot setup and reboot cycle to finish. The system should then be running without any manual post-boot install step.
 
 ```bash
 ssh chuck@castaway.local
-~/setup-boat.sh
 ```
 
-`~/setup-boat.sh` clones the repo, installs the systemd services, and enables the hotspot helper after you add the generated deploy key to GitHub.
+If you ever want to reapply the service install from the local checkout on the Pi:
+
+```bash
+~/setup-boat.sh
+```
 
 ## Manual Fallback
 

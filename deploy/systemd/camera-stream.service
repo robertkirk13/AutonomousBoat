@@ -5,7 +5,11 @@ After=network.target
 [Service]
 Type=simple
 User=chuck
-ExecStart=/usr/bin/python3 /home/chuck/AutonomousBoat/scripts/camera_stream.py --port 8554 --width 640 --height 480 --fps 15
+# Env file is managed by the firmware's camera controller so MQTT
+# CameraSet commands can change resolution/fps and enable/disable the stream.
+# Missing file is OK on first boot — the `-` prefix tolerates that.
+EnvironmentFile=-/etc/default/camera-stream
+ExecStart=/usr/bin/python3 /home/chuck/AutonomousBoat/scripts/camera_stream.py --port 8554
 Restart=always
 RestartSec=3
 

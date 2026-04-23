@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
-import type { Waypoint, BoatState, MissionState, MeasurementType, DataCollectionConfig, WaypointMode, AreaCoverageConfig, ControlMode } from '../types/index';
+import type { Waypoint, BoatState, MissionState, MeasurementType, DataCollectionConfig, WaypointMode, AreaCoverageConfig, ControlMode, CameraSettings } from '../types/index';
 import { useBoatMqtt } from '../hooks/useBoatMqtt';
 
 interface NavigationContextType {
@@ -27,7 +27,15 @@ interface NavigationContextType {
   clearGpsOffset: () => void;
   calibrateUpright: () => void;
   calibrateCompass: () => void;
+  triggerGpsCalibration: () => void;
+  registerGpsCalibrationTrigger: (fn: (() => void) | null) => void;
+  triggerGpsCalibrationReset: () => void;
+  registerGpsCalibrationResetTrigger: (fn: (() => void) | null) => void;
   rebootPi: () => void;
+  reinitMotors: () => void;
+  calibrateMotors: () => void;
+  camera: CameraSettings;
+  setCameraSettings: (settings: CameraSettings) => void;
   waypointMode: WaypointMode;
   setWaypointMode: (mode: WaypointMode) => void;
   areaCoverage: AreaCoverageConfig;
@@ -55,7 +63,7 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
   const waypointCountRef = useRef(0);
 
   // All boat state comes from MQTT
-  const { boat, publish, calibrateUpright, calibrateCompass, rebootPi } = useBoatMqtt();
+  const { boat, camera, publish, calibrateUpright, calibrateCompass, rebootPi, setCameraSettings } = useBoatMqtt();
 
   const [mission, setMission] = useState<MissionState>({
     status: 'idle',
@@ -259,6 +267,34 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
     publish('boat/command', { action: 'gps_clear_offset' });
   }, [publish]);
 
+  const reinitMotors = useCallback(() => {
+    publish('boat/command', { action: 'motor_reinit' });
+  }, [publish]);
+
+  const calibrateMotors = useCallback(() => {
+    publish('boat/command', { action: 'motor_calibrate' });
+  }, [publish]);
+
+  const gpsCalibrationTriggerRef = useRef<(() => void) | null>(null);
+  const registerGpsCalibrationTrigger = useCallback((fn: (() => void) | null) => {
+    gpsCalibrationTriggerRef.current = fn;
+  }, []);
+  const triggerGpsCalibration = useCallback(() => {
+    gpsCalibrationTriggerRef.current?.();
+  }, []);
+
+  const gpsCalibrationResetRef = useRef<(() => void) | null>(null);
+  const registerGpsCalibrationResetTrigger = useCallback((fn: (() => void) | null) => {
+    gpsCalibrationResetRef.current = fn;
+  }, []);
+  const triggerGpsCalibrationReset = useCallback(() => {
+    if (gpsCalibrationResetRef.current) {
+      gpsCalibrationResetRef.current();
+    } else {
+      clearGpsOffset();
+    }
+  }, [clearGpsOffset]);
+
   const addPolygonVertex = useCallback((lat: number, lng: number) => {
     setAreaCoverage((prev) => ({
       ...prev,
@@ -433,7 +469,15 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
         clearGpsOffset,
         calibrateUpright,
         calibrateCompass,
+        triggerGpsCalibration,
+        registerGpsCalibrationTrigger,
+        triggerGpsCalibrationReset,
+        registerGpsCalibrationResetTrigger,
         rebootPi,
+        reinitMotors,
+        calibrateMotors,
+        camera,
+        setCameraSettings,
         waypointMode,
         setWaypointMode,
         areaCoverage,

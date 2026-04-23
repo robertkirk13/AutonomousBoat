@@ -8,7 +8,7 @@ use crate::config::{
 };
 use crate::tasks::can::CanTxRequest;
 use crate::types::{CanState, MotorCommand};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -18,6 +18,8 @@ use crate::config::{
 };
 #[cfg(feature = "hw")]
 use rppal::pwm::{Channel, Polarity, Pwm};
+#[cfg(feature = "hw")]
+use std::time::Duration;
 
 /// Encode motor command as a 4-byte CAN payload: [left_hi, left_lo, right_hi, right_lo]
 /// where each value is a signed i16 in range -10000..10000 representing -1.0..1.0 thrust.
@@ -99,8 +101,8 @@ struct PwmEscOutputs {
 impl PwmEscOutputs {
     fn new() -> Result<Self, rppal::pwm::Error> {
         Ok(Self {
-            left: EscOutput::new(Channel::Pwm0, "left", LEFT_ESC_GPIO)?,
-            right: EscOutput::new(Channel::Pwm1, "right", RIGHT_ESC_GPIO)?,
+            left: EscOutput::new(Channel::Pwm1, "left", LEFT_ESC_GPIO)?,
+            right: EscOutput::new(Channel::Pwm0, "right", RIGHT_ESC_GPIO)?,
         })
     }
 
@@ -116,12 +118,20 @@ pub async fn run(
     teleop_rx: watch::Receiver<MotorCommand>,
     can_state_rx: watch::Receiver<CanState>,
     can_tx: mpsc::Sender<CanTxRequest>,
+    motor_reinit_rx: watch::Receiver<u64>,
+    motor_cal_rx: watch::Receiver<u64>,
     cancel: CancellationToken,
 ) {
     tracing::info!("Motor output task started");
 
     let mut motor_rx = motor_rx;
     let mut teleop_rx = teleop_rx;
+    let mut motor_reinit_rx = motor_reinit_rx;
+    let mut motor_cal_rx = motor_cal_rx;
+    // Mark the current seq as seen so we don't re-arm or re-calibrate at
+    // startup — the initial ESC bringup below already covers arming.
+    let _ = motor_reinit_rx.borrow_and_update();
+    let _ = motor_cal_rx.borrow_and_update();
     let can_state_rx = can_state_rx;
     let mut interval = tokio::time::interval(MOTOR_OUTPUT_INTERVAL);
     let mut autopilot_cmd = motor_rx.borrow().clone();
@@ -134,7 +144,7 @@ pub async fn run(
     let mut pwm_outputs = match PwmEscOutputs::new() {
         Ok(mut outputs) => {
             tracing::info!(
-                "PWM ESC outputs ready: {} ESC on GPIO{} (PWM0), {} ESC on GPIO{} (PWM1)",
+                "PWM ESC outputs ready: {} ESC on GPIO{} (PWM1), {} ESC on GPIO{} (PWM0)",
                 outputs.left.label,
                 outputs.left.gpio,
                 outputs.right.label,
@@ -157,6 +167,45 @@ pub async fn run(
                     tracing::info!("Motor output task stopped during ESC bringup");
                     return;
                 }
+
+                if crate::config::ESC_AUTO_CALIBRATE_ON_BOOT {
+                    tracing::warn!(
+                        "Auto-calibration on boot: MIN {:?} → MAX {:?} → NEUTRAL {:?}. Props must be off.",
+                        crate::config::ESC_CAL_MIN_HOLD_TIME,
+                        crate::config::ESC_CAL_MAX_HOLD_TIME,
+                        crate::config::ESC_BRINGUP_NEUTRAL_TIME,
+                    );
+                    let min = MotorCommand { left: -1.0, right: -1.0 };
+                    let max = MotorCommand { left: 1.0, right: 1.0 };
+                    let neutral = MotorCommand::default();
+                    let phases: [(&MotorCommand, std::time::Duration, &str); 3] = [
+                        (&min, crate::config::ESC_CAL_MIN_HOLD_TIME, "MIN"),
+                        (&max, crate::config::ESC_CAL_MAX_HOLD_TIME, "MAX"),
+                        (&neutral, crate::config::ESC_BRINGUP_NEUTRAL_TIME, "NEUTRAL"),
+                    ];
+                    let mut aborted = false;
+                    for (cmd, dur, label) in phases {
+                        tracing::info!("Auto-calibration: holding {} for {:?}", label, dur);
+                        if let Err(e) = outputs.write(cmd) {
+                            tracing::warn!("PWM ESC write failed during auto-calibration {}: {e}", label);
+                        }
+                        let cancelled = tokio::select! {
+                            _ = cancel.cancelled() => true,
+                            _ = tokio::time::sleep(dur) => false,
+                        };
+                        if cancelled {
+                            aborted = true;
+                            break;
+                        }
+                    }
+                    if aborted {
+                        let _ = outputs.write(&MotorCommand::default());
+                        tracing::info!("Motor output task stopped during auto-calibration");
+                        return;
+                    }
+                    tracing::info!("Auto-calibration complete");
+                }
+
                 Some(outputs)
             }
         }
@@ -187,6 +236,127 @@ pub async fn run(
             teleop_cmd = teleop_rx.borrow_and_update().clone();
             teleop_updated_at = Some(now);
             teleop_timeout_reported = false;
+        }
+
+        // Handle motor reinit: hold neutral PWM for the bringup duration so
+        // the ESCs re-arm. Commands received during this window are cleared
+        // and will need to be re-sent fresh after the arming window closes.
+        if matches!(motor_reinit_rx.has_changed(), Ok(true)) {
+            let _ = motor_reinit_rx.borrow_and_update();
+            tracing::warn!(
+                "Motor reinit: holding neutral PWM for {:?} to re-arm ESCs",
+                crate::config::ESC_BRINGUP_NEUTRAL_TIME
+            );
+
+            // Clear cached commands so stale teleop/autopilot values don't
+            // snap the motors back on as soon as the arming window ends.
+            autopilot_cmd = MotorCommand::default();
+            autopilot_updated_at = None;
+            teleop_cmd = MotorCommand::default();
+            teleop_updated_at = None;
+            teleop_timeout_reported = false;
+
+            #[cfg(feature = "hw")]
+            if let Some(outputs) = pwm_outputs.as_mut() {
+                if let Err(e) = outputs.write(&MotorCommand::default()) {
+                    tracing::warn!("PWM ESC write failed during reinit: {e}");
+                }
+            }
+            // Mirror zero on CAN so downstream consumers see the stop.
+            if can_state_rx.borrow().connected {
+                let data = encode_motor(&MotorCommand::default());
+                let _ = can_tx.try_send(CanTxRequest {
+                    id: CAN_MOTOR_TX_ID,
+                    data,
+                });
+            }
+
+            let cancelled = tokio::select! {
+                _ = cancel.cancelled() => true,
+                _ = tokio::time::sleep(crate::config::ESC_BRINGUP_NEUTRAL_TIME) => false,
+            };
+            if cancelled {
+                break;
+            }
+
+            // Discard any commands that arrived during the arming window so
+            // the boat doesn't jerk forward on the first post-reinit tick.
+            let _ = motor_rx.borrow_and_update();
+            let _ = teleop_rx.borrow_and_update();
+            // Skip the rest of this loop iteration — the next tick will
+            // resume normal resolution from the cleared state.
+            tracing::info!("Motor reinit complete");
+            continue;
+        }
+
+        // Handle throttle endpoint calibration. Teach the ESCs the full
+        // range by holding max for ESC_CAL_MAX_HOLD_TIME, then min for
+        // ESC_CAL_MIN_HOLD_TIME, then return to neutral and re-arm.
+        // This is a bench procedure — the MQTT handler logs a warning,
+        // and the dashboard button requires a confirmation.
+        if matches!(motor_cal_rx.has_changed(), Ok(true)) {
+            let _ = motor_cal_rx.borrow_and_update();
+            tracing::warn!(
+                "Motor throttle calibration starting: min {:?}, max {:?}, neutral {:?}",
+                crate::config::ESC_CAL_MIN_HOLD_TIME,
+                crate::config::ESC_CAL_MAX_HOLD_TIME,
+                crate::config::ESC_BRINGUP_NEUTRAL_TIME,
+            );
+
+            autopilot_cmd = MotorCommand::default();
+            autopilot_updated_at = None;
+            teleop_cmd = MotorCommand::default();
+            teleop_updated_at = None;
+            teleop_timeout_reported = false;
+
+            let max_cmd = MotorCommand { left: 1.0, right: 1.0 };
+            let min_cmd = MotorCommand { left: -1.0, right: -1.0 };
+            let neutral_cmd = MotorCommand::default();
+
+            // Helper: write a thrust to both PWM + CAN, then sleep with
+            // cancellation honored. Returns true if cancelled.
+            macro_rules! hold {
+                ($cmd:expr, $dur:expr, $label:literal) => {{
+                    tracing::info!("Calibration: holding {} for {:?}", $label, $dur);
+                    #[cfg(feature = "hw")]
+                    if let Some(outputs) = pwm_outputs.as_mut() {
+                        if let Err(e) = outputs.write(&$cmd) {
+                            tracing::warn!("PWM ESC write failed during calibration {}: {e}", $label);
+                        }
+                    }
+                    if can_state_rx.borrow().connected {
+                        let data = encode_motor(&$cmd);
+                        let _ = can_tx.try_send(CanTxRequest {
+                            id: CAN_MOTOR_TX_ID,
+                            data,
+                        });
+                    }
+                    let cancelled = tokio::select! {
+                        _ = cancel.cancelled() => true,
+                        _ = tokio::time::sleep($dur) => false,
+                    };
+                    cancelled
+                }};
+            }
+
+            let cancelled = hold!(min_cmd, crate::config::ESC_CAL_MIN_HOLD_TIME, "MIN")
+                || hold!(max_cmd, crate::config::ESC_CAL_MAX_HOLD_TIME, "MAX")
+                || hold!(neutral_cmd, crate::config::ESC_BRINGUP_NEUTRAL_TIME, "NEUTRAL");
+
+            if cancelled {
+                // Always end on neutral if we're shutting down mid-calibration.
+                #[cfg(feature = "hw")]
+                if let Some(outputs) = pwm_outputs.as_mut() {
+                    let _ = outputs.write(&MotorCommand::default());
+                }
+                break;
+            }
+
+            // Discard any commands that arrived during calibration.
+            let _ = motor_rx.borrow_and_update();
+            let _ = teleop_rx.borrow_and_update();
+            tracing::info!("Motor throttle calibration complete");
+            continue;
         }
 
         if command_is_nonzero(&teleop_cmd)
@@ -253,6 +423,7 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn encode_motor_preserves_negative_values() {

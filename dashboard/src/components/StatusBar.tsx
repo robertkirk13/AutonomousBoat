@@ -49,6 +49,15 @@ export default function StatusBar() {
             {boat.position.lat.toFixed(5)}, {boat.position.lng.toFixed(5)}
           </div>
         </div>
+
+        <div className="h-6 w-px bg-white/10" />
+
+        <div className="text-center">
+          <div className="text-white/30 text-[10px] uppercase tracking-wider">Sats</div>
+          <div className={`font-medium text-sm ${boat.satellites >= 4 ? 'text-emerald-400' : boat.satellites > 0 ? 'text-amber-400' : 'text-red-400'}`}>
+            {boat.satellites}
+          </div>
+        </div>
       </div>
 
       {/* Mission Info */}

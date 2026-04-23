@@ -8,7 +8,9 @@ import type {
   NavData,
   PayloadData,
   BoatState,
+  CameraSettings,
 } from '../types/index';
+import { DEFAULT_CAMERA_SETTINGS } from '../types/index';
 
 const HEARTBEAT_TIMEOUT = 20_000;
 
@@ -19,6 +21,7 @@ const DEFAULT_BOAT_STATE: BoatState = {
   pitch: 0,
   quaternion: { w: 1, x: 0, y: 0, z: 0 },
   speed: 0,
+  satellites: 0,
   power: null,
   thermal: null,
   nav: null,
@@ -188,6 +191,7 @@ function createChannel<T>() {
 
 export function useBoatMqtt() {
   const [boat, setBoat] = useState<BoatState>(DEFAULT_BOAT_STATE);
+  const [camera, setCamera] = useState<CameraSettings>(DEFAULT_CAMERA_SETTINGS);
   const clientRef = useRef<mqtt.MqttClient | null>(null);
   const heartbeatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusClockRef = useRef<{ uptimeSecs: number; receivedAt: number } | null>(null);
@@ -299,6 +303,14 @@ export function useBoatMqtt() {
               receivedAt: performance.now(),
             };
             break;
+          case 'boat/camera':
+            setCamera({
+              enabled: !!data.enabled,
+              width: Number(data.width) || DEFAULT_CAMERA_SETTINGS.width,
+              height: Number(data.height) || DEFAULT_CAMERA_SETTINGS.height,
+              fps: Number(data.fps) || DEFAULT_CAMERA_SETTINGS.fps,
+            });
+            break;
         }
       } catch {
         // ignore parse errors
@@ -351,9 +363,10 @@ export function useBoatMqtt() {
         quaternion = mulQuat(uprightRef.current, quaternion);
       }
 
-      // Interpolate GPS
+      // Interpolate GPS (sats is an integer count — take latest, no interp)
       let position = DEFAULT_BOAT_STATE.position;
       let speed = 0;
+      let satellites = 0;
       if (gps) {
         if ('t' in gps) {
           position = {
@@ -361,9 +374,11 @@ export function useBoatMqtt() {
             lng: lerp(gps.prev.lon, gps.curr.lon, gps.t),
           };
           speed = lerp(gps.prev.speed_mps, gps.curr.speed_mps, gps.t);
+          satellites = gps.curr.satellites ?? 0;
         } else {
           position = { lat: gps.latest.lat, lng: gps.latest.lon };
           speed = gps.latest.speed_mps;
+          satellites = gps.latest.satellites ?? 0;
         }
       }
 
@@ -428,6 +443,7 @@ export function useBoatMqtt() {
         pitch,
         quaternion,
         speed,
+        satellites,
         power: powerVal,
         thermal: thermalVal,
         nav: navVal,
@@ -448,5 +464,20 @@ export function useBoatMqtt() {
     publish('boat/command', { action: 'reboot' });
   }, [publish]);
 
-  return { boat, publish, calibrateUpright, calibrateCompass, rebootPi };
+  const setCameraSettings = useCallback(
+    (next: CameraSettings) => {
+      publish('boat/command', { action: 'camera_set', ...next });
+    },
+    [publish],
+  );
+
+  return {
+    boat,
+    camera,
+    publish,
+    calibrateUpright,
+    calibrateCompass,
+    rebootPi,
+    setCameraSettings,
+  };
 }

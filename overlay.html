@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>I14 · Telemetry Overlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+
+:root{
+  --bo:#bf5700;
+  --bo-light:rgba(191,87,0,0.18);
+  --ink:#15161a;
+  --muted:#6b6f76;
+  --paper:#ffffff;
+  /* Frame is 1920×360 */
+  --w:1920px;
+  --h:360px;
+}
+
+html,body{
+  width:var(--w);
+  height:var(--h);
+  background:transparent;
+  overflow:hidden;
+  font-family:"Inter Tight",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+
+#bar{
+  position:absolute;
+  inset:0;
+  display:grid;
+  /* status | water quality cluster | divider | mission + time */
+  grid-template-columns: 72px 1fr 2px 320px;
+  gap:0;
+  background:rgba(12,10,8,0.91);
+  border-top:3px solid var(--bo);
+}
+
+/* Vertical rule */
+.vr{
+  background:rgba(191,87,0,0.22);
+  align-self:stretch;
+  margin:20px 0;
+}
+
+/* Status panel */
+#status{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  padding:16px 10px;
+  border-right:1px solid rgba(191,87,0,0.14);
+}
+
+.status-logo{
+  font-family:"JetBrains Mono",monospace;
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.2em;
+  text-transform:uppercase;
+  color:var(--bo);
+}
+
+.status-label{
+  font-family:"JetBrains Mono",monospace;
+  font-size:9px;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+  color:rgba(255,255,255,0.28);
+}
+
+.live-row{
+  display:flex;
+  align-items:center;
+  gap:5px;
+}
+
+.live-dot{
+  width:5px;
+  height:5px;
+  border-radius:50%;
+  background:var(--bo);
+  animation:pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse{
+  0%,100%{opacity:1;transform:scale(1);}
+  50%{opacity:.35;transform:scale(.7);}
+}
+
+/* Cluster = group of metric columns */
+.cluster{
+  display:flex;
+  align-items:stretch;
+  padding:0 10px;
+  gap:4px;
+}
+
+/* Individual metric column */
+.metric{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  padding:18px 12px 16px;
+  border-top:2.5px solid transparent;
+  border-left:none;
+  position:relative;
+  min-width:0;
+}
+
+.metric.accent{border-top-color:var(--bo);}
+.metric.dim{border-top-color:rgba(191,87,0,0.35);}
+
+.m-label{
+  font-family:"JetBrains Mono",monospace;
+  font-size:9.5px;
+  font-weight:700;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+  color:var(--bo);
+  margin-bottom:6px;
+  white-space:nowrap;
+}
+
+.m-value{
+  font-family:"JetBrains Mono",monospace;
+  font-size:36px;
+  font-weight:400;
+  color:rgba(255,255,255,0.92);
+  line-height:1;
+  letter-spacing:-.01em;
+  white-space:nowrap;
+  transition:color .5s;
+}
+
+.m-value .u{
+  font-size:14px;
+  font-weight:400;
+  color:rgba(255,255,255,0.28);
+  margin-left:3px;
+  letter-spacing:.02em;
+}
+
+.m-sub{
+  font-family:"JetBrains Mono",monospace;
+  font-size:11px;
+  color:rgba(191,87,0,0.65);
+  margin-top:4px;
+  white-space:nowrap;
+}
+
+/* GPS gets smaller value text to fit coords */
+.metric.gps .m-value{font-size:16px;line-height:1.6;}
+
+/* Wide metric */
+.metric.wide{flex:1.4;}
+
+/* Right panel */
+#right-panel{
+  display:flex;
+  flex-direction:column;
+  border-left:1px solid rgba(191,87,0,0.14);
+}
+
+#mission-row{
+  flex:1;
+  display:flex;
+  align-items:center;
+  gap:0;
+  border-bottom:1px solid rgba(191,87,0,0.12);
+}
+
+.mission-block{
+  flex:1;
+  padding:12px 16px;
+  border-right:1px solid rgba(191,87,0,0.1);
+}
+
+.mission-block:last-child{border-right:none;}
+
+.mb-label{
+  font-family:"JetBrains Mono",monospace;
+  font-size:9px;
+  font-weight:700;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+  color:var(--bo);
+  margin-bottom:4px;
+}
+
+.mb-value{
+  font-family:"JetBrains Mono",monospace;
+  font-size:26px;
+  font-weight:400;
+  color:rgba(255,255,255,0.88);
+  line-height:1;
+  white-space:nowrap;
+}
+
+.mb-value .u{
+  font-size:11px;
+  color:rgba(255,255,255,0.25);
+  margin-left:2px;
+}
+
+.mb-sub{
+  font-family:"JetBrains Mono",monospace;
+  font-size:10px;
+  color:rgba(191,87,0,0.55);
+  margin-top:3px;
+}
+
+#time-row{
+  padding:10px 16px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+
+.time-val{
+  font-family:"JetBrains Mono",monospace;
+  font-size:22px;
+  font-weight:500;
+  color:rgba(255,255,255,0.55);
+  letter-spacing:.08em;
+}
+
+.date-val{
+  font-family:"JetBrains Mono",monospace;
+  font-size:11px;
+  color:rgba(255,255,255,0.2);
+  letter-spacing:.08em;
+}
+
+/* Alert states */
+.warn{color:#f59e42 !important;}
+.alert{color:#ef4444 !important;}
+</style>
+</head>
+<body>
+
+<div id="bar">
+
+  <!-- Status -->
+  <div id="status">
+    <div class="live-row">
+      <div class="live-dot"></div>
+      <div class="status-label">Live</div>
+    </div>
+    <div class="status-label" id="sats-label">9 sats</div>
+  </div>
+
+  <!-- Water quality cluster -->
+  <div class="cluster">
+
+    <div class="metric accent">
+      <div class="m-label">Temp</div>
+      <div class="m-value"><span id="temp">68.4</span><span class="u">°F</span></div>
+      <div class="m-sub" id="temp-c">20.2 °C</div>
+    </div>
+
+    <div class="metric accent">
+      <div class="m-label">pH</div>
+      <div class="m-value" id="ph">7.42</div>
+    </div>
+
+    <div class="metric wide accent">
+      <div class="m-label">Conductivity</div>
+      <div class="m-value"><span id="ec">0.38</span><span class="u">mS/cm</span></div>
+    </div>
+
+    <div class="metric wide accent">
+      <div class="m-label">Turbidity</div>
+      <div class="m-value"><span id="turb">12.4</span><span class="u">NTU</span></div>
+    </div>
+
+    <div class="metric accent">
+      <div class="m-label">Depth</div>
+      <div class="m-value"><span id="depth">24.1</span><span class="u">in</span></div>
+      <div class="m-sub" id="depth-ft">2.0 ft</div>
+    </div>
+
+  </div>
+
+  <!-- Divider -->
+  <div class="vr"></div>
+
+  <!-- Right: Mission + Time -->
+  <div id="right-panel">
+    <div id="mission-row">
+      <div class="mission-block">
+        <div class="mb-label">WP</div>
+        <div class="mb-value" id="wp">2 <span class="u">/ 6</span></div>
+        <div class="mb-sub">Running</div>
+      </div>
+      <div class="mission-block">
+        <div class="mb-label">Distance</div>
+        <div class="mb-value"><span id="dist">34</span><span class="u">m</span></div>
+        <div class="mb-sub" id="bearing">Bear. 214°</div>
+      </div>
+    </div>
+    <div id="time-row">
+      <div class="time-val" id="utc-time">14:32:07</div>
+      <div class="date-val" id="utc-date">2026-04-22 UTC</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const ch = {
+  sats:    { v:9,         min:7,        max:12,        rate:0.005    },
+  temp:    { v:68.4,      min:66.0,     max:71.5,      rate:0.004    },
+  ph:      { v:7.42,      min:6.85,     max:7.90,      rate:0.003    },
+  ec:      { v:0.38,      min:0.18,     max:0.72,      rate:0.003    },
+  turb:    { v:12.4,      min:3.0,      max:45.0,      rate:0.04     },
+  depth:   { v:24.1,      min:14.0,     max:60.0,      rate:0.06     },
+  dist:    { v:34,        min:4,        max:180,       rate:0.08     },
+  bearing: { v:214,       min:0,        max:359,       rate:0.3      },
+};
+
+Object.values(ch).forEach(c => c.target = c.v);
+
+function rand(c){ return c.min + Math.random()*(c.max-c.min); }
+
+function refreshTargets(){
+  Object.values(ch).forEach(c => c.target = rand(c));
+  setTimeout(refreshTargets, 2500 + Math.random()*3000);
+}
+refreshTargets();
+
+function fToC(f){ return ((f-32)*5/9).toFixed(1); }
+
+function tick(){
+  const LERP = 0.018;
+  Object.entries(ch).forEach(([k,c]) => {
+    const noise = (Math.random()-.5)*c.rate*.4;
+    c.v += (c.target + noise - c.v)*LERP;
+    c.v = Math.max(c.min, Math.min(c.max, c.v));
+  });
+
+  const sats = Math.round(ch.sats.v);
+  document.getElementById('sats-label').textContent = sats+' sats';
+
+  document.getElementById('temp').textContent = ch.temp.v.toFixed(1);
+  document.getElementById('temp-c').textContent = fToC(ch.temp.v)+' °C';
+
+  const phEl = document.getElementById('ph');
+  phEl.textContent = ch.ph.v.toFixed(2);
+  phEl.className = 'm-value' + (ch.ph.v<6.5||ch.ph.v>8.5 ? ' warn' : '');
+
+  document.getElementById('ec').textContent = ch.ec.v.toFixed(2);
+
+  const turbEl = document.getElementById('turb');
+  turbEl.textContent = ch.turb.v.toFixed(1);
+  turbEl.className = 'm-value' + (ch.turb.v>30 ? ' warn' : '');
+
+  document.getElementById('depth').textContent = ch.depth.v.toFixed(1);
+  document.getElementById('depth-ft').textContent = (ch.depth.v/12).toFixed(1)+' ft';
+
+  document.getElementById('dist').textContent = Math.round(ch.dist.v);
+  document.getElementById('bearing').textContent = 'Bear. '+Math.round(ch.bearing.v)+'°';
+
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+function clock(){
+  const n = new Date();
+  const pad = s => String(s).padStart(2,'0');
+  document.getElementById('utc-time').textContent =
+    pad(n.getUTCHours())+':'+pad(n.getUTCMinutes())+':'+pad(n.getUTCSeconds());
+  const d = n.getUTCFullYear()+'-'+pad(n.getUTCMonth()+1)+'-'+pad(n.getUTCDate());
+  document.getElementById('utc-date').textContent = d+' UTC';
+}
+setInterval(clock,1000);
+clock();
+</script>
+</body>
+</html>

@@ -76,6 +76,7 @@ pub struct GpsPosition {
     pub lat: f64,
     pub lon: f64,
     pub speed_mps: f64,
+    pub satellites: u8,
     #[serde(skip)]
     pub timestamp: Option<Instant>,
 }
@@ -153,6 +154,25 @@ pub struct CanState {
     pub rx_count: u64,
     pub tx_count: u64,
     pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CameraSettings {
+    pub enabled: bool,
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+}
+
+impl Default for CameraSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            width: 640,
+            height: 480,
+            fps: 15,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Default)]

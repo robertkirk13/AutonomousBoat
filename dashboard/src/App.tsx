@@ -1,4 +1,4 @@
-import { lazy, useCallback, Suspense, useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { NavigationProvider, useNavigation } from './context/NavigationContext';
 import { Sidebar, TelemetryPanel } from './components';
 import Boat3DView from './components/Boat3DView';
@@ -12,9 +12,7 @@ type ViewMode = '2d' | '3d';
 
 function AppInner() {
   const [viewMode, setViewMode] = useState<ViewMode>('2d');
-  const [cameraEnabled, setCameraEnabled] = useState(true);
   const { boat } = useNavigation();
-  const toggleCamera = useCallback(() => setCameraEnabled(prev => !prev), []);
 
   return (
     <div className="h-screen w-screen relative overflow-hidden" style={{ background: 'var(--background)' }}>
@@ -80,7 +78,7 @@ function AppInner() {
         </div>
         {/* Live camera feed */}
         <div className="w-[18rem] aspect-[4/3] shrink-0 pointer-events-auto">
-          <CameraView enabled={cameraEnabled} onToggle={toggleCamera} />
+          <CameraView />
           <div className="text-center mt-1 text-[9px] font-mono text-white/40">
             Camera
           </div>

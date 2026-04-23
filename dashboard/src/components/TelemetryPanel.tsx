@@ -1,6 +1,9 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigation } from '../context/NavigationContext';
 import { PowerPanel } from './PowerPanel';
+import type { Ina228Reading } from '../types/index';
 
 function Section({ title, children, accent }: {
   title: string;
@@ -19,6 +22,7 @@ function Section({ title, children, accent }: {
 }
 
 const mpsToKnots = (mps: number) => (mps * 1.94384).toFixed(1);
+const mpsToMph = (mps: number) => (mps * 2.23694).toFixed(1);
 
 /** Cardinal label for a heading in degrees. */
 function cardinalDir(deg: number): string {
@@ -31,10 +35,13 @@ function formatCanId(id: number | null): string {
 }
 
 /** Compact SVG compass ring with tick marks and heading needle. */
-function CompassRing({ heading }: { heading: number }) {
-  const r = 32;
-  const cx = 40;
-  const cy = 40;
+function CompassRing({ heading, size = 80 }: { heading: number; size?: number }) {
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = cx * 0.8;
+  const cardLen = r * 0.22;
+  const tickLen = r * 0.13;
+  const labelR = r + r * 0.19;
   const ticks = [];
 
   // 36 tick marks (every 10°), longer at cardinals
@@ -42,7 +49,7 @@ function CompassRing({ heading }: { heading: number }) {
     const deg = i * 10;
     const rad = ((deg - 90) * Math.PI) / 180;
     const isCardinal = deg % 90 === 0;
-    const inner = isCardinal ? r - 7 : r - 4;
+    const inner = r - (isCardinal ? cardLen : tickLen);
     ticks.push(
       <line
         key={i}
@@ -56,35 +63,32 @@ function CompassRing({ heading }: { heading: number }) {
     );
   }
 
-  // Heading needle
   const needleRad = ((heading - 90) * Math.PI) / 180;
-  const needleLen = r - 2;
+  const needleLen = r - r * 0.06;
+  const labelFontPx = Math.max(6, Math.round(size * 0.09));
 
   return (
-    <svg width={80} height={80} viewBox="0 0 80 80" className="shrink-0" role="img" aria-label={`Compass heading ${Math.round(heading)} degrees`}>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0" role="img" aria-label={`Compass heading ${Math.round(heading)} degrees`}>
       <title>{`Heading ${Math.round(heading)}°`}</title>
-      {/* Outer ring */}
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={1} />
       {ticks}
-      {/* Cardinal labels */}
       {(['N', 'E', 'S', 'W'] as const).map((dir, i) => {
         const deg = i * 90;
         const rad = ((deg - 90) * Math.PI) / 180;
-        const lr = r + 6;
         return (
           <text
             key={dir}
-            x={cx + lr * Math.cos(rad)}
-            y={cy + lr * Math.sin(rad)}
+            x={cx + labelR * Math.cos(rad)}
+            y={cy + labelR * Math.sin(rad)}
             textAnchor="middle"
             dominantBaseline="central"
-            className="fill-white/20 text-[7px] font-medium"
+            fontSize={labelFontPx}
+            className="fill-white/20 font-medium"
           >
             {dir}
           </text>
         );
       })}
-      {/* Needle */}
       <line
         x1={cx}
         y1={cy}
@@ -94,15 +98,15 @@ function CompassRing({ heading }: { heading: number }) {
         strokeWidth={1.5}
         strokeLinecap="round"
       />
-      {/* Center dot */}
-      <circle cx={cx} cy={cy} r={2} fill="oklch(0.65 0.17 50)" opacity={0.6} />
+      <circle cx={cx} cy={cy} r={Math.max(1.25, size * 0.025)} fill="oklch(0.65 0.17 50)" opacity={0.6} />
     </svg>
   );
 }
 
 export default function TelemetryPanel() {
-  const { boat, calibrateUpright, calibrateCompass, rebootPi } = useNavigation();
+  const { boat, calibrateUpright, calibrateCompass, triggerGpsCalibration, triggerGpsCalibrationReset, rebootPi } = useNavigation();
   const uptimeSeconds = Math.floor(boat.uptime);
+  const [motorModalOpen, setMotorModalOpen] = useState(false);
 
   const findChannel = (label: string) =>
     boat.power?.channels.find((ch) => ch.label === label);
@@ -120,7 +124,7 @@ export default function TelemetryPanel() {
   const coreTemp = temp1 && temp2 ? (temp1.temp_c + temp2.temp_c) / 2 : temp1?.temp_c ?? temp2?.temp_c ?? null;
 
   return (
-    <div className="h-full flex flex-col overflow-y-auto">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* Connection badge */}
       <div className="px-3.5 pt-3 pb-1.5 flex items-center gap-2">
         <div className={`w-1.5 h-1.5 rounded-full ${
@@ -136,55 +140,92 @@ export default function TelemetryPanel() {
         )}
       </div>
 
-      {/* Speed — hero display */}
-      <div className="px-3.5 pt-2 pb-1 text-center">
-        <span className="text-[9px] font-medium text-white/25 uppercase tracking-[0.1em]">Speed</span>
-        <div className="flex items-baseline justify-center gap-1.5 mt-1">
-          <span className="text-4xl font-mono font-extralight text-white/90 tabular-nums leading-none">
-            {mpsToKnots(boat.speed)}
+      {/* Speed · Compass · Heading — single compact row */}
+      <div className="px-3 py-1.5 flex items-center justify-between gap-1">
+        <div className="flex flex-col items-start min-w-0">
+          <span className="text-[8px] font-medium text-white/25 uppercase tracking-[0.1em]">Speed</span>
+          <div className="flex items-baseline gap-0.5">
+            <span className="text-2xl font-mono font-extralight text-white/90 tabular-nums leading-none">
+              {mpsToKnots(boat.speed)}
+            </span>
+            <span className="text-[10px] text-white/25 font-light">kn</span>
+          </div>
+          <span className="text-[9px] font-medium text-teal/60 leading-tight mt-0.5 tabular-nums">
+            {mpsToMph(boat.speed)} mph
           </span>
-          <span className="text-xs text-white/25 font-light">kn</span>
         </div>
-      </div>
-
-      <div className="h-px bg-white/[0.04] mx-3" />
-
-      {/* Heading — compass + readout */}
-      <div className="px-3.5 py-2.5 flex flex-col items-center">
-        <CompassRing heading={boat.heading} />
-        <div className="flex items-baseline gap-1 mt-1.5">
-          <span className="text-xl font-mono font-light text-white/85 tabular-nums leading-none">
-            {boat.heading.toFixed(0)}
-          </span>
-          <span className="text-[10px] text-white/30">&deg;</span>
-          <span className="text-[10px] font-medium text-teal/60 ml-0.5">
+        <CompassRing heading={boat.heading} size={64} />
+        <div className="flex flex-col items-end min-w-0">
+          <span className="text-[8px] font-medium text-white/25 uppercase tracking-[0.1em]">Heading</span>
+          <div className="flex items-baseline gap-0.5">
+            <span className="text-2xl font-mono font-light text-white/85 tabular-nums leading-none">
+              {boat.heading.toFixed(0)}
+            </span>
+            <span className="text-[10px] text-white/30">&deg;</span>
+          </div>
+          <span className="text-[9px] font-medium text-teal/60 leading-tight mt-0.5">
             {cardinalDir(boat.heading)}
           </span>
         </div>
-        {/* Position */}
-        <div className="mt-1.5 text-[10px] font-mono text-white/40 tabular-nums text-center leading-relaxed">
-          {boat.position.lat.toFixed(5)}, {boat.position.lng.toFixed(5)}
-        </div>
-        {boat.nav && (boat.nav.mode === 'running' || boat.nav.mode === 'holding') && (
-          <div className="flex items-baseline gap-1.5 mt-1.5 pt-1.5 border-t border-white/[0.04] w-full justify-center">
-            <span className="text-[9px] text-white/25 uppercase tracking-wider">To WP</span>
-            <span className="text-[10px] font-mono text-teal/60 tabular-nums">
-              {boat.nav.distance_m.toFixed(0)}
-              <span className="text-white/25 ml-0.5">m</span>
-            </span>
-          </div>
-        )}
       </div>
+
+      {/* Position + sats — one line */}
+      <div className="px-3.5 py-1 flex items-baseline justify-between text-[10px] font-mono tabular-nums">
+        <span className="text-white/40">
+          {boat.position.lat.toFixed(5)}, {boat.position.lng.toFixed(5)}
+        </span>
+        <span>
+          <span className="text-white/25 uppercase tracking-wider mr-1 text-[9px]">Sats</span>
+          <span className={boat.satellites >= 4 ? 'text-emerald-400' : boat.satellites > 0 ? 'text-amber-400' : 'text-red-400'}>
+            {boat.satellites}
+          </span>
+        </span>
+      </div>
+
+      {boat.nav && (boat.nav.mode === 'running' || boat.nav.mode === 'holding') && (
+        <div className="px-3.5 py-1 flex items-baseline justify-center gap-1.5 border-t border-white/[0.04]">
+          <span className="text-[9px] text-white/25 uppercase tracking-wider">To WP</span>
+          <span className="text-[10px] font-mono text-teal/60 tabular-nums">
+            {boat.nav.distance_m.toFixed(0)}
+            <span className="text-white/25 ml-0.5">m</span>
+          </span>
+        </div>
+      )}
 
       <div className="h-px bg-white/[0.04] mx-3" />
 
-      {/* Motors — with embedded temperature */}
-      <Section title="Motors">
-        <div className="flex gap-2 mt-1">
-          <MotorBar label="Port" thrust={leftThrust} current={leftMotor?.current_a ?? 0} temp={temp1?.temp_c ?? null} />
-          <MotorBar label="Stbd" thrust={rightThrust} current={rightMotor?.current_a ?? 0} temp={temp2?.temp_c ?? null} />
-        </div>
-      </Section>
+      {/* Motors — with embedded temperature. Clickable to open control modal. */}
+      <button
+        type="button"
+        onClick={() => setMotorModalOpen(true)}
+        className="block w-full text-left hover:bg-white/[0.02] transition-colors"
+      >
+        <Section
+          title="Motors"
+          accent={(
+            <span className="text-[9px] font-medium uppercase tracking-[0.1em] text-white/25">
+              Open
+            </span>
+          )}
+        >
+          <div className="flex gap-2 mt-1">
+            <MotorBar label="Port" thrust={leftThrust} current={leftMotor?.current_a ?? 0} temp={temp1?.temp_c ?? null} />
+            <MotorBar label="Stbd" thrust={rightThrust} current={rightMotor?.current_a ?? 0} temp={temp2?.temp_c ?? null} />
+          </div>
+        </Section>
+      </button>
+
+      {motorModalOpen && (
+        <MotorControlModal
+          leftMotor={leftMotor}
+          rightMotor={rightMotor}
+          leftThrust={leftThrust}
+          rightThrust={rightThrust}
+          leftTemp={temp1?.temp_c ?? null}
+          rightTemp={temp2?.temp_c ?? null}
+          onClose={() => setMotorModalOpen(false)}
+        />
+      )}
 
       <div className="h-px bg-white/[0.04] mx-3" />
 
@@ -289,6 +330,24 @@ export default function TelemetryPanel() {
                   </svg>
                   Set North
                 </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-white/60 hover:text-white/90 hover:bg-white/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
+                  onSelect={triggerGpsCalibration}
+                >
+                  <svg className="w-3.5 h-3.5 text-white/35" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 4v12m-6-6h12" />
+                  </svg>
+                  Cal GPS
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-white/60 hover:text-white/90 hover:bg-white/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
+                  onSelect={triggerGpsCalibrationReset}
+                >
+                  <svg className="w-3.5 h-3.5 text-white/35" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M6 18L18 6" />
+                  </svg>
+                  Clear GPS
+                </DropdownMenu.Item>
                 <DropdownMenu.Separator className="h-px bg-white/[0.06] my-1" />
                 <DropdownMenu.Item
                   className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-red-400/70 hover:text-red-400 hover:bg-red-500/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
@@ -347,6 +406,511 @@ function PayloadMetric({
         />
       </div>
     </div>
+  );
+}
+
+function MotorStatTile({ label, value, unit, color = 'text-white/80' }: {
+  label: string;
+  value: string;
+  unit: string;
+  color?: string;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[9px] text-white/35 uppercase tracking-wider">{label}</span>
+      <span className={`font-mono text-sm ${color} tabular-nums`}>
+        {value}
+        <span className="text-white/30 text-[10px] ml-0.5">{unit}</span>
+      </span>
+    </div>
+  );
+}
+
+function MotorStatsColumn({
+  title,
+  motor,
+  commandedThrust,
+  temp,
+  sliderValue,
+  onZero,
+  canControl,
+  align,
+}: {
+  title: string;
+  motor: Ina228Reading | undefined;
+  commandedThrust: number;
+  temp: number | null;
+  sliderValue: number;
+  onZero: () => void;
+  canControl: boolean;
+  align: 'left' | 'right';
+}) {
+  const pct = Math.round(sliderValue * 100);
+  const commandedPct = Math.round(commandedThrust * 100);
+  const alignClass = align === 'right' ? 'text-right items-end' : 'text-left items-start';
+
+  return (
+    <div className={`flex-1 min-w-0 flex flex-col gap-2 bg-white/[0.02] rounded-xl border border-white/[0.04] p-3 ${alignClass}`}>
+      <div className="flex items-baseline justify-between w-full">
+        <span className="text-[11px] font-medium text-white/70 uppercase tracking-[0.1em]">{title}</span>
+        <span className="text-[10px] font-mono text-white/30 tabular-nums">
+          cmd {commandedPct > 0 ? '+' : ''}{commandedPct}%
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 w-full">
+        <MotorStatTile
+          label="Voltage"
+          value={motor ? motor.voltage_v.toFixed(2) : '--'}
+          unit="V"
+        />
+        <MotorStatTile
+          label="Current"
+          value={motor ? Math.abs(motor.current_a).toFixed(2) : '--'}
+          unit="A"
+          color={motor && Math.abs(motor.current_a) > 10 ? 'text-amber-400' : 'text-white/80'}
+        />
+        <MotorStatTile
+          label="Power"
+          value={motor ? Math.abs(motor.power_w).toFixed(1) : '--'}
+          unit="W"
+        />
+        <MotorStatTile
+          label="Temp"
+          value={temp !== null ? temp.toFixed(1) : '--'}
+          unit="°C"
+          color={temp !== null && temp > 60 ? 'text-amber-400' : 'text-white/80'}
+        />
+      </div>
+
+      <div className="flex-1" />
+
+      <div className="w-full flex items-baseline justify-between">
+        <span className="text-[9px] text-white/35 uppercase tracking-wider">Set</span>
+        <span className="font-mono text-sm text-white/80 tabular-nums">
+          {pct > 0 ? '+' : ''}{pct}
+          <span className="text-white/30 text-[10px] ml-0.5">%</span>
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onZero}
+        disabled={!canControl}
+        className={`w-full py-1 rounded bg-white/[0.04] border border-white/[0.06] text-[10px] font-mono text-white/50 hover:bg-white/[0.08] hover:text-white/80 transition-colors ${
+          canControl ? '' : 'opacity-30 cursor-not-allowed'
+        }`}
+      >
+        Zero
+      </button>
+    </div>
+  );
+}
+
+function VerticalThrustSlider({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  disabled: boolean;
+}) {
+  return (
+    <input
+      type="range"
+      min={-100}
+      max={100}
+      step={1}
+      value={Math.round(value * 100)}
+      onChange={e => onChange(Number(e.target.value) / 100)}
+      disabled={disabled}
+      style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
+      className={`h-full w-4 accent-teal ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
+    />
+  );
+}
+
+function MotorControlModal({
+  leftMotor,
+  rightMotor,
+  leftThrust,
+  rightThrust,
+  leftTemp,
+  rightTemp,
+  onClose,
+}: {
+  leftMotor: Ina228Reading | undefined;
+  rightMotor: Ina228Reading | undefined;
+  leftThrust: number;
+  rightThrust: number;
+  leftTemp: number | null;
+  rightTemp: number | null;
+  onClose: () => void;
+}) {
+  const { controlMode, setControlMode, sendTeleop, reinitMotors, calibrateMotors } = useNavigation();
+  const [leftCmd, setLeftCmd] = useState(0);
+  const [rightCmd, setRightCmd] = useState(0);
+  const [linked, setLinked] = useState(false);
+  const [reinitAt, setReinitAt] = useState<number | null>(null);
+  const [calAt, setCalAt] = useState<number | null>(null);
+  const leftRef = useRef(leftCmd);
+  const rightRef = useRef(rightCmd);
+  leftRef.current = leftCmd;
+  rightRef.current = rightCmd;
+
+  const canControl = controlMode === 'teleop';
+  // Firmware holds neutral for ESC_BRINGUP_NEUTRAL_TIME = 3s. Match that here so the UI
+  // reflects the blocked-input window.
+  const REINIT_WINDOW_MS = 3000;
+  // Calibration: MAX (3s) + MIN (3s) + NEUTRAL re-arm (3s) = 9s. Match firmware config.rs.
+  const CAL_MAX_MS = 3000;
+  const CAL_MIN_MS = 3000;
+  const CAL_NEUTRAL_MS = 3000;
+  const CAL_WINDOW_MS = CAL_MAX_MS + CAL_MIN_MS + CAL_NEUTRAL_MS;
+  const reinitInProgress = reinitAt !== null && Date.now() - reinitAt < REINIT_WINDOW_MS;
+  const calInProgress = calAt !== null && Date.now() - calAt < CAL_WINDOW_MS;
+  const inputsLocked = reinitInProgress || calInProgress;
+  const calElapsed = calAt !== null ? Date.now() - calAt : 0;
+  const calPhase: 'max' | 'min' | 'neutral' | null = !calInProgress
+    ? null
+    : calElapsed < CAL_MIN_MS
+      ? 'min'
+      : calElapsed < CAL_MIN_MS + CAL_MAX_MS
+        ? 'max'
+        : 'neutral';
+
+  // Continuously stream commanded thrust while in teleop — matches Sidebar's 10Hz cadence.
+  // Skip during reinit/calibration so the sliders can't push commands into the firmware
+  // while it's holding fixed PWM.
+  useEffect(() => {
+    if (!canControl || inputsLocked) return;
+    const id = setInterval(() => {
+      sendTeleop(leftRef.current, rightRef.current);
+    }, 100);
+    return () => clearInterval(id);
+  }, [canControl, inputsLocked, sendTeleop]);
+
+  const stopAll = useCallback(() => {
+    setLeftCmd(0);
+    setRightCmd(0);
+    if (canControl) sendTeleop(0, 0);
+  }, [canControl, sendTeleop]);
+
+  // Keyboard shortcuts: Esc closes, Space e-stops (even if focus is on a slider).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.code === 'Space') {
+        // Swallow the space press so it doesn't nudge a focused range slider.
+        e.preventDefault();
+        stopAll();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, stopAll]);
+
+  const setLeft = useCallback((v: number) => {
+    if (inputsLocked) return;
+    setLeftCmd(v);
+    if (linked) setRightCmd(v);
+  }, [linked, inputsLocked]);
+
+  const setRight = useCallback((v: number) => {
+    if (inputsLocked) return;
+    setRightCmd(v);
+    if (linked) setLeftCmd(v);
+  }, [linked, inputsLocked]);
+
+  const setBoth = useCallback((v: number) => {
+    if (inputsLocked) return;
+    setLeftCmd(v);
+    setRightCmd(v);
+    if (canControl) sendTeleop(v, v);
+  }, [canControl, inputsLocked, sendTeleop]);
+
+  const handleReinit = useCallback(() => {
+    // Zero sliders first so stale values don't snap the motors on when the arming window ends.
+    setLeftCmd(0);
+    setRightCmd(0);
+    if (canControl) sendTeleop(0, 0);
+    reinitMotors();
+    setReinitAt(Date.now());
+  }, [canControl, reinitMotors, sendTeleop]);
+
+  const handleCalibrate = useCallback(() => {
+    const ok = window.confirm(
+      'ESC endpoint calibration\n\n' +
+      '⚠  Props MUST be OFF the motor shafts.\n\n' +
+      'This teaches both ESCs full-reverse and full-forward. The boat will send:\n' +
+      '  • MIN for 3s\n' +
+      '  • MAX for 3s\n' +
+      '  • NEUTRAL for 3s (re-arm)\n\n' +
+      'Continue?'
+    );
+    if (!ok) return;
+    setLeftCmd(0);
+    setRightCmd(0);
+    if (canControl) sendTeleop(0, 0);
+    calibrateMotors();
+    setCalAt(Date.now());
+  }, [canControl, calibrateMotors, sendTeleop]);
+
+  // Tick so the "Arming…" / calibration labels update as time elapses.
+  useEffect(() => {
+    if (!inputsLocked) return;
+    const id = setInterval(() => {
+      if (reinitAt !== null && Date.now() - reinitAt >= REINIT_WINDOW_MS) {
+        setReinitAt(null);
+      }
+      if (calAt !== null && Date.now() - calAt >= CAL_WINDOW_MS) {
+        setCalAt(null);
+      }
+    }, 100);
+    return () => clearInterval(id);
+  }, [reinitAt, calAt, inputsLocked, CAL_WINDOW_MS]);
+
+  const takeControl = () => {
+    setControlMode('teleop');
+  };
+
+  const releaseControl = () => {
+    setLeftCmd(0);
+    setRightCmd(0);
+    sendTeleop(0, 0);
+    setControlMode('autonomous');
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1999] pointer-events-auto bg-black/40" onClick={onClose}>
+      <div
+        onClick={e => e.stopPropagation()}
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(60vw,calc(100vw-34rem))] aspect-[4/3] max-h-[85vh] z-[2000] pointer-events-auto rounded-2xl bg-panel/95 backdrop-blur-xl border border-panel-border/60 shadow-2xl shadow-black/60 overflow-hidden flex flex-col"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.06] gap-3">
+          <div className="flex flex-col min-w-0">
+            <span className="text-[10px] font-medium text-white/35 uppercase tracking-[0.1em]">Motors</span>
+            <span className="text-sm text-white/85 font-medium">Manual Control</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-mono px-2 py-1 rounded border ${
+              canControl
+                ? 'bg-amber-400/10 border-amber-400/30 text-amber-300'
+                : 'bg-white/[0.04] border-white/[0.08] text-white/50'
+            }`}>
+              {canControl ? 'TELEOP' : 'AUTONOMOUS'}
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-6 h-6 flex items-center justify-center rounded-md bg-black/40 hover:bg-black/60 text-white/50 hover:text-white/80 transition-colors"
+              title="Close"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} role="img">
+                <title>Close</title>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Stats on outer edges, sliders paired in the middle */}
+        <div className="flex-1 min-h-0 px-4 py-3 flex gap-3 items-stretch">
+          <MotorStatsColumn
+            title="Port"
+            motor={leftMotor}
+            commandedThrust={leftThrust}
+            temp={leftTemp}
+            sliderValue={leftCmd}
+            onZero={() => setLeft(0)}
+            canControl={canControl}
+            align="left"
+          />
+
+          <div className="flex flex-col items-center gap-2 py-1">
+            <div className="flex items-stretch gap-2 flex-1 min-h-0">
+              <div className="flex flex-col justify-between text-[9px] font-mono text-white/25 tabular-nums">
+                <span>+100</span>
+                <span>0</span>
+                <span>-100</span>
+              </div>
+              <VerticalThrustSlider value={leftCmd} onChange={setLeft} disabled={!canControl || inputsLocked} />
+              <VerticalThrustSlider value={rightCmd} onChange={setRight} disabled={!canControl || inputsLocked} />
+              <div className="flex flex-col justify-between text-[9px] font-mono text-white/25 tabular-nums">
+                <span>+100</span>
+                <span>0</span>
+                <span>-100</span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1 w-full">
+              <button
+                type="button"
+                onClick={() => setBoth(1)}
+                disabled={!canControl || inputsLocked}
+                className={`px-2 py-1 text-[10px] font-mono rounded border transition-colors ${
+                  !canControl || inputsLocked
+                    ? 'bg-white/[0.02] border-white/[0.06] text-white/25 cursor-not-allowed'
+                    : 'bg-teal/10 border-teal/25 text-teal/85 hover:bg-teal/20 hover:text-teal'
+                }`}
+                title="Full forward (+100%) on both motors"
+              >
+                +100
+              </button>
+              <button
+                type="button"
+                onClick={() => setBoth(0)}
+                disabled={!canControl || inputsLocked}
+                className={`px-2 py-1 text-[10px] font-mono rounded border transition-colors ${
+                  !canControl || inputsLocked
+                    ? 'bg-white/[0.02] border-white/[0.06] text-white/25 cursor-not-allowed'
+                    : 'bg-white/[0.04] border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/90'
+                }`}
+                title="Neutral (0%) on both motors"
+              >
+                0
+              </button>
+              <button
+                type="button"
+                onClick={() => setBoth(-1)}
+                disabled={!canControl || inputsLocked}
+                className={`px-2 py-1 text-[10px] font-mono rounded border transition-colors ${
+                  !canControl || inputsLocked
+                    ? 'bg-white/[0.02] border-white/[0.06] text-white/25 cursor-not-allowed'
+                    : 'bg-amber-400/10 border-amber-400/25 text-amber-300/85 hover:bg-amber-400/20 hover:text-amber-300'
+                }`}
+                title="Full reverse (-100%) on both motors"
+              >
+                -100
+              </button>
+            </div>
+          </div>
+
+          <MotorStatsColumn
+            title="Stbd"
+            motor={rightMotor}
+            commandedThrust={rightThrust}
+            temp={rightTemp}
+            sliderValue={rightCmd}
+            onZero={() => setRight(0)}
+            canControl={canControl}
+            align="right"
+          />
+        </div>
+
+        {/* Control bar: STOP centered and dominant, secondary actions flanking */}
+        <div className="px-4 py-3 border-t border-white/[0.06] bg-black/20 grid grid-cols-3 items-center gap-2">
+          {/* Left — secondary controls */}
+          <div className="flex items-center gap-2 justify-start">
+            <button
+              type="button"
+              onClick={() => setLinked(l => !l)}
+              className={`px-2.5 py-1.5 text-[10px] font-mono rounded border transition-colors ${
+                linked
+                  ? 'bg-teal/15 border-teal/30 text-teal'
+                  : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:text-white/80'
+              }`}
+              title="Link both sliders so they move together"
+            >
+              {linked ? 'Linked' : 'Link'}
+            </button>
+            <button
+              type="button"
+              onClick={handleReinit}
+              disabled={inputsLocked}
+              className={`px-2.5 py-1.5 text-[10px] font-mono rounded border transition-colors ${
+                reinitInProgress
+                  ? 'bg-amber-400/10 border-amber-400/20 text-amber-300/60 cursor-not-allowed'
+                  : inputsLocked
+                    ? 'bg-white/[0.02] border-white/[0.06] text-white/30 cursor-not-allowed'
+                    : 'bg-white/[0.04] border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/90'
+              }`}
+              title="Re-arm both ESCs by holding neutral PWM for 3 seconds"
+            >
+              {reinitInProgress ? 'Arming…' : 'Reinit ESCs'}
+            </button>
+            <button
+              type="button"
+              onClick={handleCalibrate}
+              disabled={inputsLocked}
+              className={`px-2.5 py-1.5 text-[10px] font-mono rounded border transition-colors ${
+                calInProgress
+                  ? 'bg-orange-400/15 border-orange-400/30 text-orange-300 cursor-not-allowed'
+                  : inputsLocked
+                    ? 'bg-white/[0.02] border-white/[0.06] text-white/30 cursor-not-allowed'
+                    : 'bg-white/[0.04] border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/90'
+              }`}
+              title="Teach ESCs min/max PWM endpoints. Props MUST be off."
+            >
+              {calInProgress
+                ? calPhase === 'min' ? 'Cal: MIN' : calPhase === 'max' ? 'Cal: MAX' : 'Cal: ARM'
+                : 'Calibrate'}
+            </button>
+          </div>
+
+          {/* Center — dominant Stop */}
+          <div className="flex flex-col items-center">
+            <button
+              type="button"
+              onClick={stopAll}
+              className="w-full max-w-[14rem] py-3 text-sm font-bold uppercase tracking-[0.2em] rounded-xl bg-red-500/20 border border-red-500/40 text-red-200 hover:bg-red-500/30 hover:border-red-500/60 active:bg-red-500/40 transition-colors shadow-lg shadow-red-500/10"
+              title="Stop both motors (hotkey: Space)"
+            >
+              Stop
+            </button>
+            <span className="mt-1 text-[9px] font-mono text-white/25 uppercase tracking-wider">
+              Space
+            </span>
+          </div>
+
+          {/* Right — mode toggle */}
+          <div className="flex items-center justify-end">
+            {canControl ? (
+              <button
+                type="button"
+                onClick={releaseControl}
+                className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider rounded bg-white/[0.06] border border-white/[0.1] text-white/70 hover:text-white/90 hover:bg-white/[0.1] transition-colors"
+              >
+                Release
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={takeControl}
+                className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider rounded bg-amber-400/15 border border-amber-400/30 text-amber-300 hover:bg-amber-400/20 transition-colors"
+                title="Stops the mission and lets these sliders drive the motors"
+              >
+                Take Control
+              </button>
+            )}
+          </div>
+        </div>
+
+        {(!canControl || inputsLocked) && (
+          <div className="px-4 py-2 border-t border-white/[0.06] text-[10px] text-white/35 leading-relaxed">
+            {calInProgress ? (
+              <>
+                <span className="text-orange-300/90">Calibrating ESC endpoints</span> —
+                {' '}{calPhase === 'min' ? 'holding MIN (full reverse)' : calPhase === 'max' ? 'holding MAX (full forward)' : 'returning to neutral (re-arm)'}.
+                {' '}Props must be off. Sliders are locked for ~{Math.max(0, Math.ceil((CAL_WINDOW_MS - calElapsed) / 1000))}s.
+              </>
+            ) : reinitInProgress ? (
+              <>
+                <span className="text-amber-300/80">Holding neutral PWM</span> — ESCs re-arming. Sliders are locked and will not send thrust for ~3s.
+              </>
+            ) : (
+              <>
+                Sliders are read-only while autonomous. Click <span className="text-white/65">Take Control</span> to drive. Sends at 10Hz while held in teleop.
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
   );
 }
 

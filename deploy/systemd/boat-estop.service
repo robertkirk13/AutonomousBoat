@@ -1,0 +1,20 @@
+[Unit]
+Description=Boat E-Stop Monitor
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/chuck/AutonomousBoat/scripts/estop_monitor.py monitor
+WorkingDirectory=/home/chuck/AutonomousBoat/scripts
+Environment=ESTOP_GPIO=5
+Environment=ESTOP_ACTIVE_STATE=high
+Environment=ESTOP_BIAS=pull-up
+Environment=ESTOP_DEBOUNCE_MS=50
+Environment=ESTOP_POLL_MS=25
+Environment=ESTOP_SERVICE=boat-firmware.service
+Restart=always
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target

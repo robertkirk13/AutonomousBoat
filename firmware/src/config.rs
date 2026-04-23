@@ -49,6 +49,11 @@ pub const TOPIC_STATUS: &str = "boat/status";
 pub const TOPIC_GPS: &str = "boat/gps";
 pub const TOPIC_NAV: &str = "boat/nav";
 pub const TOPIC_PAYLOAD: &str = "boat/payload";
+pub const TOPIC_CAMERA: &str = "boat/camera";
+
+// Camera service integration
+pub const CAMERA_SERVICE: &str = "camera-stream";
+pub const CAMERA_ENV_FILE: &str = "/etc/default/camera-stream";
 
 // MQTT topics (subscribe)
 pub const TOPIC_MISSION_SET: &str = "boat/mission/set";
@@ -72,8 +77,19 @@ pub const ESC_PWM_MIN_US: u64 = 1_000;
 pub const ESC_PWM_NEUTRAL_US: u64 = 1_500;
 pub const ESC_PWM_MAX_US: u64 = 2_000;
 pub const ESC_BRINGUP_NEUTRAL_TIME: Duration = Duration::from_secs(3);
-pub const LEFT_ESC_GPIO: u8 = 12;
-pub const RIGHT_ESC_GPIO: u8 = 13;
+// Throttle endpoint calibration: most bidirectional ESCs arm, listen for max
+// for ~2s, then listen for min for ~2s, then return to neutral. These are
+// generous values that work across Hobbywing/BLHeli/Flycolor families.
+pub const ESC_CAL_MAX_HOLD_TIME: Duration = Duration::from_secs(3);
+pub const ESC_CAL_MIN_HOLD_TIME: Duration = Duration::from_secs(3);
+// Automatically run the MIN→MAX→NEUTRAL calibration after the neutral
+// bringup arm. Costs an extra ~9s of boot time. Props MUST be off whenever
+// this is enabled. Default off: APISqueen ESCs auto-detect throttle range
+// and ignore endpoint teaching, so this is a no-op on our hardware. Leave
+// as a switch for future traditional Hobbywing/BLHeli ESCs.
+pub const ESC_AUTO_CALIBRATE_ON_BOOT: bool = true;
+pub const LEFT_ESC_GPIO: u8 = 13;
+pub const RIGHT_ESC_GPIO: u8 = 12;
 
 // MCP2515 CAN controller (SPI bus 0, CE0, 16MHz crystal)
 pub const CAN_SPI_DEV: &str = "/dev/spidev0.0";

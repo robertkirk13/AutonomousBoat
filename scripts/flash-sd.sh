@@ -422,6 +422,9 @@ sed "s|/home/chuck|$HOME|g" \
     ~/AutonomousBoat/deploy/systemd/boat-firmware.service | sudo tee /etc/systemd/system/boat-firmware.service > /dev/null
 
 sed "s|/home/chuck|$HOME|g" \
+    ~/AutonomousBoat/deploy/systemd/boat-estop.service | sudo tee /etc/systemd/system/boat-estop.service > /dev/null
+
+sed "s|/home/chuck|$HOME|g" \
     ~/AutonomousBoat/deploy/systemd/ssd1306-dashboard.service | sudo tee /etc/systemd/system/ssd1306-dashboard.service > /dev/null
 
 sed "s|/home/chuck|$HOME|g; s|User=chuck|User=$USER|g" \
@@ -431,7 +434,7 @@ sudo cp ~/AutonomousBoat/deploy/systemd/boat-hotspot.service /etc/systemd/system
 sudo /usr/local/sbin/boat-network.sh install
 
 sudo systemctl daemon-reload
-sudo systemctl enable boat-firmware ssd1306-dashboard camera-stream boat-hotspot
+sudo systemctl enable boat-firmware boat-estop ssd1306-dashboard camera-stream boat-hotspot
 
 if ! sudo systemctl start boat-hotspot; then
     echo "==> Hotspot auto-start skipped (the Pi Wi-Fi radio may not support concurrent AP+client mode)."
@@ -439,7 +442,7 @@ if ! sudo systemctl start boat-hotspot; then
     echo "      sudo /usr/local/sbin/boat-network.sh hotspot-up takeover"
 fi
 
-sudo systemctl restart boat-firmware ssd1306-dashboard camera-stream
+sudo systemctl restart boat-estop boat-firmware ssd1306-dashboard camera-stream
 echo "==> BoatCore services installed and started"
 SETUPEOF
 chmod +x "$USER_HOME/setup-boat.sh"
@@ -452,6 +455,9 @@ sed "s|/home/chuck|$USER_HOME|g" \
     "$USER_HOME/AutonomousBoat/deploy/systemd/boat-firmware.service" > /etc/systemd/system/boat-firmware.service
 
 sed "s|/home/chuck|$USER_HOME|g" \
+    "$USER_HOME/AutonomousBoat/deploy/systemd/boat-estop.service" > /etc/systemd/system/boat-estop.service
+
+sed "s|/home/chuck|$USER_HOME|g" \
     "$USER_HOME/AutonomousBoat/deploy/systemd/ssd1306-dashboard.service" > /etc/systemd/system/ssd1306-dashboard.service
 
 sed "s|/home/chuck|$USER_HOME|g; s|User=chuck|User=__USERNAME__|g" \
@@ -461,13 +467,13 @@ cp "$USER_HOME/AutonomousBoat/deploy/systemd/boat-hotspot.service" /etc/systemd/
 /usr/local/sbin/boat-network.sh install
 
 systemctl daemon-reload
-systemctl enable boat-firmware ssd1306-dashboard camera-stream boat-hotspot
+systemctl enable boat-firmware boat-estop ssd1306-dashboard camera-stream boat-hotspot
 
 if ! systemctl start boat-hotspot; then
     echo "==> Hotspot auto-start skipped (the Pi Wi-Fi radio may not support concurrent AP+client mode)." >&2
 fi
 
-systemctl restart boat-firmware ssd1306-dashboard camera-stream
+systemctl restart boat-estop boat-firmware ssd1306-dashboard camera-stream
 
 # Remove staged artifacts after a successful install to free boot-partition space.
 rm -rf "$INSTALL_STAGING"

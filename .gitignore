@@ -14,5 +14,9 @@ simulator/dist/
 # Downloaded OS images
 .cache/
 
+# macOS app build outputs
+macos/BoatProvisioner/.build/
+macos/BoatProvisioner/build/
+
 # DSstore
 .DS_Store

@@ -70,6 +70,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (teleop_tx, teleop_rx) = watch::channel(MotorCommand::default());
     let (can_state_tx, can_state_rx) = watch::channel(CanState::default());
     let (payload_tx, payload_rx) = watch::channel(PayloadSensorState::default());
+    let (camera_tx, camera_rx) = watch::channel(CameraSettings::default());
+    // Motor reinit signal: monotonic counter that the motor task watches; bumped
+    // on each MQTT reinit command so the ESC re-arm sequence runs.
+    let (motor_reinit_tx, motor_reinit_rx) = watch::channel(0u64);
+    // Motor throttle endpoint calibration signal: same pattern, runs the
+    // max/min/neutral teach sequence when bumped. Props MUST be off.
+    let (motor_cal_tx, motor_cal_rx) = watch::channel(0u64);
 
     // CAN TX request channel (other tasks can send CAN frames)
     let (can_tx, can_tx_rx) = mpsc::channel::<tasks::can::CanTxRequest>(32);
@@ -124,6 +131,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cancel.clone(),
     ));
 
+    // --- Camera controller: persists settings to env file + systemctl restart ---
+    #[cfg(feature = "hw")]
+    let camera_handle = tokio::spawn(tasks::camera::run(camera_rx.clone(), cancel.clone()));
+
     // --- GPS (EG25-G via USB serial, hw only) ---
     #[cfg(feature = "hw")]
     let gps_handle = tokio::spawn(tasks::gps::run(
@@ -149,6 +160,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         teleop_rx,
         can_state_rx,
         can_tx.clone(),
+        motor_reinit_rx.clone(),
+        motor_cal_rx.clone(),
         cancel.clone(),
     ));
 
@@ -183,6 +196,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     lat: lat + offset.lat,
                     lon: lon + offset.lon,
                     speed_mps: speed,
+                    satellites: 12,
                     timestamp: Some(Instant::now()),
                 });
             }
@@ -201,9 +215,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 gps_rx,
                 nav_rx,
                 payload_rx,
+                camera_rx,
                 mission_tx,
                 teleop_tx,
                 gps_offset_tx,
+                camera_tx,
+                motor_reinit_tx,
+                motor_cal_tx,
                 cancel.clone(),
             )))
         }
@@ -216,6 +234,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(not(feature = "hw"))]
     {
         let _ = can_state_rx;
+        let _ = motor_reinit_rx;
+        let _ = motor_cal_rx;
         drop(can_tx);
     }
 
@@ -232,6 +252,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = display_handle.await;
         let _ = can_handle.await;
         let _ = payload_handle.await;
+        #[cfg(feature = "hw")]
+        let _ = camera_handle.await;
         #[cfg(feature = "hw")]
         let _ = gps_handle.await;
         #[cfg(feature = "hw")]

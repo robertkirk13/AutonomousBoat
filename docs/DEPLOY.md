@@ -64,6 +64,7 @@ If the Pi username is the default `chuck`, direct copies are fine:
 ```bash
 sudo install -m 0755 scripts/boat-network.sh /usr/local/sbin/boat-network.sh
 sudo cp deploy/systemd/boat-firmware.service /etc/systemd/system/
+sudo cp deploy/systemd/boat-estop.service /etc/systemd/system/
 sudo cp deploy/systemd/ssd1306-dashboard.service /etc/systemd/system/
 sudo cp deploy/systemd/boat-hotspot.service /etc/systemd/system/
 ```
@@ -73,6 +74,7 @@ If you used a different Pi username, rewrite the home-directory paths during ins
 ```bash
 sudo install -m 0755 scripts/boat-network.sh /usr/local/sbin/boat-network.sh
 sed "s|/home/chuck|$HOME|g" deploy/systemd/boat-firmware.service | sudo tee /etc/systemd/system/boat-firmware.service > /dev/null
+sed "s|/home/chuck|$HOME|g" deploy/systemd/boat-estop.service | sudo tee /etc/systemd/system/boat-estop.service > /dev/null
 sed "s|/home/chuck|$HOME|g" deploy/systemd/ssd1306-dashboard.service | sudo tee /etc/systemd/system/ssd1306-dashboard.service > /dev/null
 sudo cp deploy/systemd/boat-hotspot.service /etc/systemd/system/
 ```
@@ -88,8 +90,8 @@ Reload and enable:
 ```bash
 sudo /usr/local/sbin/boat-network.sh install
 sudo systemctl daemon-reload
-sudo systemctl enable boat-firmware ssd1306-dashboard boat-hotspot
-sudo systemctl start boat-firmware ssd1306-dashboard boat-hotspot
+sudo systemctl enable boat-firmware boat-estop ssd1306-dashboard boat-hotspot
+sudo systemctl start boat-firmware boat-estop ssd1306-dashboard boat-hotspot
 ```
 
 If you want the camera stream too:
@@ -103,11 +105,31 @@ sudo systemctl start camera-stream
 
 ```bash
 sudo systemctl status boat-firmware
+sudo systemctl status boat-estop
 sudo systemctl status ssd1306-dashboard
 sudo systemctl status boat-hotspot
 journalctl -u boat-hotspot -n 50
 journalctl -u boat-firmware -f
 ```
+
+## E-Stop Behavior
+
+The repo now supports a maintained GPIO e-stop without fully powering down the Pi:
+
+- while the e-stop is held, `boat-estop.service` stops `boat-firmware`
+- when the switch is released, `boat-estop.service` starts `boat-firmware` again
+- `boat-firmware.service` also waits for a released e-stop before launching, so it will not arm on boot if the switch is still pressed
+
+The default configuration is intended for a fail-safe normally-closed loop:
+
+- wire the switch between `GPIO5` (header pin 29) and `GND`
+- leave the unit files at `ESTOP_ACTIVE_STATE=high` and `ESTOP_BIAS=pull-up`
+- released switch: GPIO stays low through the closed contact
+- pressed switch or broken wire: GPIO floats high and stops the firmware
+
+If you use a normally-open switch instead, change `ESTOP_ACTIVE_STATE=low` in both `boat-firmware.service` and `boat-estop.service`.
+
+This is intentionally a service-level stop/start rather than a full Linux halt. On a Pi Zero 2 W, a true "halt on press, auto-boot on release" setup is not the easy path, and the usual wake pin (`GPIO3`) is already part of the boat's I2C bus.
 
 ## Updating Day-to-Day
 
@@ -127,11 +149,14 @@ ssh chuck@castaway.local
 cd ~/AutonomousBoat
 git pull
 sudo install -m 0755 scripts/boat-network.sh /usr/local/sbin/boat-network.sh
+sed "s|/home/chuck|$HOME|g" deploy/systemd/boat-firmware.service | sudo tee /etc/systemd/system/boat-firmware.service > /dev/null
+sed "s|/home/chuck|$HOME|g" deploy/systemd/boat-estop.service | sudo tee /etc/systemd/system/boat-estop.service > /dev/null
+sudo systemctl daemon-reload
 sudo /usr/local/sbin/boat-network.sh install
-sudo systemctl restart ssd1306-dashboard
+sudo systemctl restart boat-estop boat-firmware ssd1306-dashboard
 ```
 
-If a service template changed and you are not using the default `chuck` user, rerun the path-rewrite install commands before restarting the service. If the hotspot helper or its config changed, restart it too:
+If the hotspot helper or its config changed, restart it too:
 
 ```bash
 sudo systemctl restart boat-hotspot
