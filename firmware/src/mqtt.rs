@@ -61,6 +61,7 @@ pub async fn run(
     nav_rx: watch::Receiver<NavState>,
     payload_rx: watch::Receiver<PayloadSensorState>,
     camera_rx: watch::Receiver<CameraSettings>,
+    network_rx: watch::Receiver<NetworkState>,
     mission_tx: watch::Sender<Mission>,
     teleop_tx: watch::Sender<MotorCommand>,
     gps_offset_tx: watch::Sender<GpsOffset>,
@@ -214,6 +215,7 @@ pub async fn run(
     let mut nav_rx = nav_rx;
     let mut payload_rx = payload_rx;
     let mut camera_rx = camera_rx;
+    let mut network_rx = network_rx;
     let mut status_interval = tokio::time::interval(MQTT_STATUS_INTERVAL);
     let mut imu_interval = tokio::time::interval(MQTT_IMU_INTERVAL);
     let mut gps_interval = tokio::time::interval(GPS_INTERVAL);
@@ -282,6 +284,15 @@ pub async fn run(
                 } else {
                     let state = camera_rx.borrow_and_update().clone();
                     publish_retained_json(&client, TOPIC_CAMERA, &state).await;
+                }
+            }
+
+            result = network_rx.changed() => {
+                if result.is_err() {
+                    tracing::warn!("Network channel closed, stopping network publishes");
+                } else {
+                    let state = network_rx.borrow_and_update().clone();
+                    publish_retained_json(&client, TOPIC_NETWORK, &state).await;
                 }
             }
 

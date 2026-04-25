@@ -71,6 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (can_state_tx, can_state_rx) = watch::channel(CanState::default());
     let (payload_tx, payload_rx) = watch::channel(PayloadSensorState::default());
     let (camera_tx, camera_rx) = watch::channel(CameraSettings::default());
+    let (network_tx, network_rx) = watch::channel(NetworkState::default());
     // Motor reinit signal: monotonic counter that the motor task watches; bumped
     // on each MQTT reinit command so the ESC re-arm sequence runs.
     let (motor_reinit_tx, motor_reinit_rx) = watch::channel(0u64);
@@ -130,6 +131,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         payload_tx,
         cancel.clone(),
     ));
+
+    let network_handle = tokio::spawn(tasks::network::run(network_tx, cancel.clone()));
 
     // --- Camera controller: persists settings to env file + systemctl restart ---
     #[cfg(feature = "hw")]
@@ -216,6 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 nav_rx,
                 payload_rx,
                 camera_rx,
+                network_rx,
                 mission_tx,
                 teleop_tx,
                 gps_offset_tx,
@@ -252,6 +256,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = display_handle.await;
         let _ = can_handle.await;
         let _ = payload_handle.await;
+        let _ = network_handle.await;
         #[cfg(feature = "hw")]
         let _ = camera_handle.await;
         #[cfg(feature = "hw")]

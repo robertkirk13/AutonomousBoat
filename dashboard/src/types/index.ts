@@ -99,6 +99,19 @@ export interface StatusData {
   uptime_secs: number;
 }
 
+export type NetworkKind = 'none' | 'wifi' | 'cellular' | 'ethernet';
+
+export interface NetworkData {
+  kind: NetworkKind;
+  interface: string | null;
+  ssid: string | null;
+  signal_dbm: number | null;
+  signal_pct: number | null;
+  link_speed_mbps: number | null;
+  ip_addr: string | null;
+  operator: string | null;
+}
+
 export interface CameraSettings {
   enabled: boolean;
   width: number;
@@ -136,9 +149,11 @@ export interface BoatState {
   thermal: ThermalData | null;
   nav: NavData | null;
   payload: PayloadData | null;
+  network: NetworkData | null;
   uptime: number;
   mqttConnected: boolean;
   boatOnline: boolean;
+  latencyMs: number | null;
 }
 
 export interface DataCollectionConfig {

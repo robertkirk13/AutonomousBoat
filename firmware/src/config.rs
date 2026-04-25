@@ -25,8 +25,12 @@ pub const TMP1075_CHANNELS: &[(u16, &str)] = &[(0x4A, "board_temp_1"), (0x4B, "b
 
 // INA228 calibration
 pub const R_SHUNT: f64 = 0.001; // 1 mΩ
-pub const MAX_CURRENT: f64 = 35.0; // 35A
-pub const CURRENT_LSB: f64 = MAX_CURRENT / (1 << 19) as f64; // ~76.29 µA/LSB
+pub const MAX_CURRENT: f64 = 20.0; // 20A
+pub const CURRENT_LSB: f64 = MAX_CURRENT / (1 << 19) as f64; // ~38.15 µA/LSB
+// Use the high-precision ±40.96mV ADC range. 20A × 1mΩ = 20mV peak shunt drop,
+// fits in ±40.96mV with 2× headroom and gives 4× better current resolution
+// than the default ±163.84mV range. SHUNT_CAL must be ×4 when this is set.
+pub const INA228_ADC_RANGE_LOW: bool = true;
 
 // Poll intervals
 pub const IMU_INTERVAL: Duration = Duration::from_millis(50); // 20Hz
@@ -50,6 +54,10 @@ pub const TOPIC_GPS: &str = "boat/gps";
 pub const TOPIC_NAV: &str = "boat/nav";
 pub const TOPIC_PAYLOAD: &str = "boat/payload";
 pub const TOPIC_CAMERA: &str = "boat/camera";
+pub const TOPIC_NETWORK: &str = "boat/network";
+
+// Network telemetry
+pub const NETWORK_INTERVAL: Duration = Duration::from_secs(5);
 
 // Camera service integration
 pub const CAMERA_SERVICE: &str = "camera-stream";

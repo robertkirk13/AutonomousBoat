@@ -7,12 +7,32 @@ import type {
   ThermalData,
   NavData,
   PayloadData,
+  NetworkData,
   BoatState,
   CameraSettings,
 } from '../types/index';
 import { DEFAULT_CAMERA_SETTINGS } from '../types/index';
 
-const HEARTBEAT_TIMEOUT = 10_000;
+const HEARTBEAT_TIMEOUT = 5_000;
+const PING_INTERVAL = 3_000;
+// Topic the dashboard publishes to (and subscribes to via boat/#) to measure
+// broker round-trip latency. The boat firmware ignores this prefix.
+const PING_TOPIC = 'boat/dashboard/ping';
+// Topics that prove the boat is alive. Receiving any of these resets the
+// heartbeat timer. Excludes PING_TOPIC (broker echo only) and command topics
+// the dashboard publishes itself.
+const BOAT_TOPICS = new Set([
+  'boat/imu',
+  'boat/gps',
+  'boat/power',
+  'boat/thermal',
+  'boat/nav',
+  'boat/payload',
+  'boat/network',
+  'boat/status',
+  'boat/camera',
+  'boat/can',
+]);
 
 const DEFAULT_BOAT_STATE: BoatState = {
   position: { lat: 47.6062, lng: -122.3321 },
@@ -26,9 +46,11 @@ const DEFAULT_BOAT_STATE: BoatState = {
   thermal: null,
   nav: null,
   payload: null,
+  network: null,
   uptime: 0,
   mqttConnected: false,
   boatOnline: false,
+  latencyMs: null,
 };
 
 function lerp(a: number, b: number, t: number): number {
@@ -207,6 +229,15 @@ export function useBoatMqtt() {
   // Connection state doesn't need interpolation — store in refs updated immediately
   const connState = useRef({ mqttConnected: false, boatOnline: false });
 
+  // Network telemetry updates much slower than IMU/GPS (every 5s) and has
+  // discrete fields (SSID, kind), so don't interpolate it — pass through.
+  const networkRef = useRef<NetworkData | null>(null);
+  // Round-trip latency (dashboard → broker → dashboard), measured by echoing
+  // a self-published ping. Reset to null whenever the broker disconnects.
+  const latencyRef = useRef<number | null>(null);
+  // Per-ping send timestamps keyed by nonce so out-of-order replies are sane.
+  const pingSentRef = useRef<Map<string, number>>(new Map());
+
   // Upright calibration: stores inverse of the reference quaternion
   const uprightRef = useRef<Quat | null>(null);
   // Compass calibration: heading offset in degrees
@@ -262,20 +293,64 @@ export function useBoatMqtt() {
     });
     clientRef.current = client;
 
+    let pingTimer: ReturnType<typeof setInterval> | null = null;
+    const sendPing = () => {
+      if (!client.connected) return;
+      const nonce = Math.random().toString(36).slice(2, 10);
+      pingSentRef.current.set(nonce, performance.now());
+      // Drop the oldest pending pings so the map can't grow unbounded if the
+      // broker stops echoing (e.g. while disconnected).
+      if (pingSentRef.current.size > 8) {
+        const oldest = pingSentRef.current.keys().next().value;
+        if (oldest) pingSentRef.current.delete(oldest);
+      }
+      client.publish(PING_TOPIC, JSON.stringify({ nonce }), { qos: 0 });
+    };
+
     client.on('connect', () => {
       connState.current.mqttConnected = true;
       client.subscribe('boat/#');
+      // Kick off ping loop. The broker echoes our publish back via the
+      // boat/# subscription; dt = receive_time - send_time.
+      sendPing();
+      if (pingTimer) clearInterval(pingTimer);
+      pingTimer = setInterval(sendPing, PING_INTERVAL);
     });
 
     client.on('close', () => {
       connState.current.mqttConnected = false;
       connState.current.boatOnline = false;
+      latencyRef.current = null;
+      pingSentRef.current.clear();
       if (heartbeatTimer.current) clearTimeout(heartbeatTimer.current);
+      if (pingTimer) {
+        clearInterval(pingTimer);
+        pingTimer = null;
+      }
     });
 
     client.on('message', (topic: string, payload: Buffer) => {
       try {
         const data = JSON.parse(payload.toString());
+
+        if (topic === PING_TOPIC) {
+          const nonce: string | undefined = data?.nonce;
+          if (nonce) {
+            const sent = pingSentRef.current.get(nonce);
+            if (sent != null) {
+              latencyRef.current = performance.now() - sent;
+              pingSentRef.current.delete(nonce);
+            }
+          }
+          return;
+        }
+
+        // Any message on a boat-originated topic proves the firmware is alive.
+        // Status alone fires every 10s while the heartbeat timeout is 5s, so
+        // relying solely on status would flicker offline between heartbeats.
+        if (BOAT_TOPICS.has(topic)) {
+          resetHeartbeat();
+        }
 
         switch (topic) {
           case 'boat/imu':
@@ -296,12 +371,14 @@ export function useBoatMqtt() {
           case 'boat/payload':
             payloadChannel.current.push(data as PayloadData);
             break;
+          case 'boat/network':
+            networkRef.current = data as NetworkData;
+            break;
           case 'boat/status':
             statusClockRef.current = {
               uptimeSecs: data.uptime_secs ?? 0,
               receivedAt: performance.now(),
             };
-            resetHeartbeat();
             break;
           case 'boat/camera':
             setCamera({
@@ -321,6 +398,7 @@ export function useBoatMqtt() {
       client.end();
       clientRef.current = null;
       if (heartbeatTimer.current) clearTimeout(heartbeatTimer.current);
+      if (pingTimer) clearInterval(pingTimer);
     };
   }, []);
 
@@ -448,9 +526,11 @@ export function useBoatMqtt() {
         thermal: thermalVal,
         nav: navVal,
         payload: payloadVal,
+        network: networkRef.current,
         uptime: uptimeVal,
         mqttConnected: connState.current.mqttConnected,
         boatOnline: connState.current.boatOnline,
+        latencyMs: latencyRef.current,
       });
 
       rafId = requestAnimationFrame(tick);

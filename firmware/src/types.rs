@@ -175,6 +175,36 @@ impl Default for CameraSettings {
     }
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkKind {
+    None,
+    Wifi,
+    Cellular,
+    Ethernet,
+}
+
+impl Default for NetworkKind {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// Snapshot of the active internet uplink. The kind reflects whichever
+/// interface owns the default route; `signal_pct` is normalized 0..100 so
+/// the dashboard doesn't have to know dBm vs CSQ scales.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct NetworkState {
+    pub kind: NetworkKind,
+    pub interface: Option<String>,
+    pub ssid: Option<String>,
+    pub signal_dbm: Option<i32>,
+    pub signal_pct: Option<u8>,
+    pub link_speed_mbps: Option<f64>,
+    pub ip_addr: Option<String>,
+    pub operator: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Default)]
 pub struct PayloadSensorState {
     pub connected: bool,

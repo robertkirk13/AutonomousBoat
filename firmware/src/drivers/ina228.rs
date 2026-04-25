@@ -1,6 +1,9 @@
 use crate::bus::{I2cBus, I2cError};
-use crate::config::{CURRENT_LSB, R_SHUNT};
+use crate::config::{CURRENT_LSB, INA228_ADC_RANGE_LOW, R_SHUNT};
 use crate::types::Ina228Reading;
+
+const CONFIG_RSTACC: u16 = 0x4000;
+const CONFIG_ADCRANGE: u16 = 0x0010;
 
 // Register addresses
 const REG_CONFIG: u8 = 0x00;
@@ -37,15 +40,25 @@ impl Ina228 {
 
     /// Write calibration register and reset accumulators.
     pub async fn calibrate(&self) -> Result<(), I2cError> {
-        let shunt_cal = (13107.2e6 * CURRENT_LSB * R_SHUNT) as u16;
+        // Per INA228 datasheet: SHUNT_CAL = 13107.2e6 × CURRENT_LSB × R_SHUNT,
+        // multiplied by 4 when ADCRANGE=1 (±40.96mV).
+        let mut shunt_cal = 13107.2e6 * CURRENT_LSB * R_SHUNT;
+        if INA228_ADC_RANGE_LOW {
+            shunt_cal *= 4.0;
+        }
         self.bus
-            .write_word_data(self.addr, REG_SHUNT_CAL, shunt_cal)
+            .write_word_data(self.addr, REG_SHUNT_CAL, shunt_cal as u16)
             .await?;
 
-        // Reset accumulators: set RSTACC bit (bit 14) in CONFIG
         let cfg = self.bus.read_word_data(self.addr, REG_CONFIG).await?;
+        let mut new_cfg = cfg | CONFIG_RSTACC;
+        if INA228_ADC_RANGE_LOW {
+            new_cfg |= CONFIG_ADCRANGE;
+        } else {
+            new_cfg &= !CONFIG_ADCRANGE;
+        }
         self.bus
-            .write_word_data(self.addr, REG_CONFIG, cfg | 0x4000)
+            .write_word_data(self.addr, REG_CONFIG, new_cfg)
             .await?;
 
         Ok(())

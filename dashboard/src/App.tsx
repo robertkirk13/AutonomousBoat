@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from 'react';
 import { NavigationProvider, useNavigation } from './context/NavigationContext';
-import { Sidebar, TelemetryPanel } from './components';
+import { ErrorBanner, Sidebar, TelemetryPanel } from './components';
 import Boat3DView from './components/Boat3DView';
 import CameraView from './components/CameraView';
 import './App.css';
@@ -33,6 +33,8 @@ function AppInner() {
           <Sidebar />
         </div>
       </aside>
+
+      <ErrorBanner />
 
       {/* Top-left controls */}
       <div className="absolute top-2.5 z-[1000]" style={{ left: '16.25rem' }}>

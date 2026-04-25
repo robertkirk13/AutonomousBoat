@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigation } from '../context/NavigationContext';
 import { PowerPanel } from './PowerPanel';
-import type { Ina228Reading } from '../types/index';
+import type { Ina228Reading, NetworkData } from '../types/index';
 
 function Section({ title, children, accent }: {
   title: string;
@@ -128,11 +128,16 @@ export default function TelemetryPanel() {
       {/* Connection badge */}
       <div className="px-3.5 pt-3 pb-1.5 flex items-center gap-2">
         <div className={`w-1.5 h-1.5 rounded-full ${
-          boat.boatOnline ? 'bg-teal animate-pulse' : boat.mqttConnected ? 'bg-amber-400' : 'bg-white/15'
+          boat.boatOnline ? 'bg-teal animate-pulse' : 'bg-white/15'
         }`} />
         <span className="text-[10px] font-medium tracking-wide text-white/40">
-          {boat.boatOnline ? 'LIVE' : boat.mqttConnected ? 'MQTT OK' : 'OFFLINE'}
+          {boat.boatOnline ? 'LIVE' : 'OFFLINE'}
         </span>
+        <ConnectionIcon
+          network={boat.network}
+          online={boat.boatOnline}
+          latencyMs={boat.latencyMs}
+        />
         {boat.uptime > 0 && (
           <span className="text-[10px] font-mono text-white/20 ml-auto">
             {Math.floor(uptimeSeconds / 60)}:{String(uptimeSeconds % 60).padStart(2, '0')}
@@ -169,10 +174,13 @@ export default function TelemetryPanel() {
         </div>
       </div>
 
-      {/* Position + sats — one line */}
+      {/* Position + sats — one line. Position is hidden without a fix
+          (sats == 0) since the value is unreliable / stale in that case. */}
       <div className="px-3.5 py-1 flex items-baseline justify-between text-[10px] font-mono tabular-nums">
         <span className="text-white/40">
-          {boat.position.lat.toFixed(5)}, {boat.position.lng.toFixed(5)}
+          {boat.satellites > 0
+            ? `${boat.position.lat.toFixed(5)}, ${boat.position.lng.toFixed(5)}`
+            : <span className="text-white/20 italic">no fix</span>}
         </span>
         <span>
           <span className="text-white/25 uppercase tracking-wider mr-1 text-[9px]">Sats</span>
@@ -364,6 +372,218 @@ export default function TelemetryPanel() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Compact connection-type indicator with hover tooltip. Shows a wifi or
+ * cellular glyph whose filled-bar count reflects signal strength. Tooltip
+ * surfaces SSID, signal, IP, and link speed.
+ */
+function ConnectionIcon({
+  network,
+  online,
+  latencyMs,
+}: {
+  network: NetworkData | null;
+  online: boolean;
+  latencyMs: number | null;
+}) {
+  // While we're offline or have never received a network packet, render a
+  // muted placeholder so the row layout stays stable.
+  const kind = network?.kind ?? 'none';
+  const dim = !online || kind === 'none';
+  const bars = signalBars(network);
+  const tone = dim ? 'text-white/25' : kind === 'wifi' ? 'text-teal/70' : kind === 'cellular' ? 'text-amber-300/80' : 'text-white/55';
+
+  const label = (() => {
+    if (!online) return 'Boat offline';
+    if (kind === 'none') return 'No uplink';
+    if (kind === 'wifi') return network?.ssid ?? 'Wi-Fi';
+    if (kind === 'cellular') return network?.operator ?? 'Cellular';
+    if (kind === 'ethernet') return 'Ethernet';
+    return 'Unknown';
+  })();
+
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
+
+  // Recompute the tooltip anchor whenever it opens. Portalled to document.body
+  // so the surrounding sidebar's overflow:hidden doesn't clip it.
+  useEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setAnchor({ top: rect.bottom + 6, left: rect.left });
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={`Connection: ${label}`}
+        className={`flex items-center cursor-default outline-none ${tone}`}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+      >
+        {kind === 'cellular' ? (
+          <CellularGlyph bars={bars} />
+        ) : kind === 'ethernet' ? (
+          <EthernetGlyph />
+        ) : (
+          <WifiGlyph bars={bars} />
+        )}
+      </button>
+
+      {open && anchor && createPortal(
+        <div
+          role="tooltip"
+          style={{ position: 'fixed', top: anchor.top, left: anchor.left }}
+          className="pointer-events-none z-[1100] w-44 rounded-xl border border-panel-border/60 bg-panel/70 px-2.5 py-2 shadow-2xl shadow-black/50 backdrop-blur-2xl"
+        >
+          <ConnectionTooltipBody
+            network={network}
+            online={online}
+            label={label}
+            latencyMs={latencyMs}
+          />
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+function ConnectionTooltipBody({
+  network,
+  online,
+  label,
+  latencyMs,
+}: {
+  network: NetworkData | null;
+  online: boolean;
+  label: string;
+  latencyMs: number | null;
+}) {
+  const latencyRow =
+    latencyMs != null ? (
+      <TooltipRow label="RTT" value={`${Math.round(latencyMs)} ms`} />
+    ) : null;
+
+  if (!online) {
+    return (
+      <>
+        <div className="text-[10px] text-white/40 mb-1.5">No telemetry from boat.</div>
+        {latencyRow && <dl className="space-y-1 text-[10px] font-mono">{latencyRow}</dl>}
+      </>
+    );
+  }
+  if (!network || network.kind === 'none') {
+    return (
+      <>
+        <div className="text-[10px] text-white/40 mb-1.5">No active uplink reported.</div>
+        {latencyRow && <dl className="space-y-1 text-[10px] font-mono">{latencyRow}</dl>}
+      </>
+    );
+  }
+  return (
+    <>
+      <div className="flex items-baseline justify-between gap-2 mb-1.5">
+        <span className="text-[11px] font-semibold text-white/85 truncate">{label}</span>
+        <span className="text-[9px] uppercase tracking-[0.14em] text-white/30">
+          {network.kind === 'wifi' ? 'Wi-Fi' : network.kind === 'cellular' ? 'LTE' : 'Eth'}
+        </span>
+      </div>
+      <dl className="space-y-1 text-[10px] font-mono">
+        {network.signal_pct != null && (
+          <TooltipRow label="Signal" value={`${network.signal_pct}%${network.signal_dbm != null ? ` (${network.signal_dbm} dBm)` : ''}`} />
+        )}
+        {network.kind === 'wifi' && network.ssid && (
+          <TooltipRow label="SSID" value={network.ssid} />
+        )}
+        {network.kind === 'cellular' && network.operator && (
+          <TooltipRow label="Carrier" value={network.operator} />
+        )}
+        {network.interface && <TooltipRow label="Iface" value={network.interface} />}
+        {network.ip_addr && <TooltipRow label="IP" value={network.ip_addr} />}
+        {network.link_speed_mbps != null && (
+          <TooltipRow label="Link" value={`${network.link_speed_mbps.toFixed(0)} Mb/s`} />
+        )}
+        {latencyRow}
+      </dl>
+    </>
+  );
+}
+
+function TooltipRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <dt className="text-white/35 uppercase tracking-wider text-[9px]">{label}</dt>
+      <dd className="text-white/75 truncate text-right">{value}</dd>
+    </div>
+  );
+}
+
+/** Discretize signal strength into 0..4 bars. Null falls back to 1 (connected
+ *  but unknown strength) so the icon renders something meaningful. */
+function signalBars(network: NetworkData | null): number {
+  if (!network || network.kind === 'none') return 0;
+  const pct = network.signal_pct;
+  if (pct == null) return 1;
+  if (pct >= 75) return 4;
+  if (pct >= 50) return 3;
+  if (pct >= 25) return 2;
+  if (pct > 0) return 1;
+  return 0;
+}
+
+function WifiGlyph({ bars }: { bars: number }) {
+  // Three nested arcs + a base dot. Active arcs scale with bar count.
+  const activeOpacity = (i: number) => (bars >= i ? 1 : 0.18);
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" role="img" aria-hidden="true">
+      <path d="M2 8.5a16 16 0 0 1 20 0" strokeWidth={2} strokeLinecap="round" opacity={activeOpacity(4)} />
+      <path d="M5 12a12 12 0 0 1 14 0" strokeWidth={2} strokeLinecap="round" opacity={activeOpacity(3)} />
+      <path d="M8 15.5a8 8 0 0 1 8 0" strokeWidth={2} strokeLinecap="round" opacity={activeOpacity(2)} />
+      <circle cx={12} cy={19} r={1.4} fill="currentColor" stroke="none" opacity={activeOpacity(1)} />
+    </svg>
+  );
+}
+
+function CellularGlyph({ bars }: { bars: number }) {
+  const heights = [
+    { id: 'b1', h: 4 },
+    { id: 'b2', h: 7 },
+    { id: 'b3', h: 10 },
+    { id: 'b4', h: 13 },
+  ];
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" role="img" aria-hidden="true">
+      {heights.map(({ id, h }, i) => (
+        <rect
+          key={id}
+          x={3 + i * 5.2}
+          y={20 - h}
+          width={3.6}
+          height={h}
+          rx={0.6}
+          fill="currentColor"
+          opacity={bars >= i + 1 ? 1 : 0.18}
+        />
+      ))}
+    </svg>
+  );
+}
+
+function EthernetGlyph() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" role="img" aria-hidden="true">
+      <rect x={5} y={4} width={14} height={10} rx={1.5} />
+      <path d="M8 14v3M12 14v4M16 14v3" />
+    </svg>
   );
 }
 
