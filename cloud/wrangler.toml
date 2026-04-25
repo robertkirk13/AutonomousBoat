@@ -1,0 +1,39 @@
+name = "boat-recorder"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# --- D1 (SQLite at the edge) ---
+# Create with:  wrangler d1 create boat-telemetry
+# then paste the printed database_id below.
+[[d1_databases]]
+binding = "DB"
+database_name = "boat-telemetry"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# --- Durable Object: persistent MQTT subscriber + D1 writer ---
+[[durable_objects.bindings]]
+name = "RECORDER"
+class_name = "MqttRecorder"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["MqttRecorder"]
+
+# --- Plain vars (non-secret) ---
+[vars]
+BOAT_ID = "castaway2"
+ALLOWED_ORIGIN = "*"
+# When true, fetch handlers boot the recorder on first request as a backstop.
+ENSURE_RECORDER_RUNNING = "true"
+
+# --- Hourly backstop: re-pokes the DO so eviction can't permanently halt ingestion ---
+[triggers]
+crons = ["0 * * * *"]
+
+# --- Secrets (set via `wrangler secret put`):
+#   MQTT_HOST   e.g. <your-cluster>.s2.eu.hivemq.cloud
+#   MQTT_PORT   e.g. 8884              (HiveMQ Cloud WSS port)
+#   MQTT_USER
+#   MQTT_PASS
+#   API_TOKEN   optional; protects /recorder/start and any future write routes

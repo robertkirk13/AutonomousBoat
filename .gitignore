@@ -6,6 +6,8 @@ dashboard/node_modules/
 dashboard/dist/
 simulator/node_modules/
 simulator/dist/
+cloud/node_modules/
+cloud/dist/
 
 # Environment
 .env

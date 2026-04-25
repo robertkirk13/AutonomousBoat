@@ -1,0 +1,18 @@
+{
+  "name": "boat-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "migrate:local": "wrangler d1 migrations apply boat-telemetry --local",
+    "migrate:remote": "wrangler d1 migrations apply boat-telemetry --remote"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250121.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^3.99.0"
+  }
+}
