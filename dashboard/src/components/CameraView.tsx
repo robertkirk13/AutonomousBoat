@@ -1,18 +1,83 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import Hls from 'hls.js';
 import { useNavigation } from '../context/NavigationContext';
 import { CAMERA_RESOLUTIONS, CAMERA_FPS_OPTIONS } from '../types/index';
 
-const CAMERA_URL = import.meta.env.VITE_CAMERA_URL || 'http://boat.local:8554/stream';
+// VITE_CAMERA_URL is the *base* URL (no trailing slash); the playlist
+// path is appended below. Default works for on-LAN dev; the cellular
+// build sets it to the Cloudflare Tunnel hostname.
+const CAMERA_BASE = (import.meta.env.VITE_CAMERA_URL || 'http://boat.local:8554').replace(/\/$/, '');
+const HLS_URL = `${CAMERA_BASE}/hls/stream.m3u8`;
 
-export default function CameraView() {
+interface CameraViewProps {
+  onLiveChange?: (live: boolean) => void;
+}
+
+export default function CameraView({ onLiveChange }: CameraViewProps = {}) {
   const { camera, setCameraSettings } = useNavigation();
   const [error, setError] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Cache-buster so restarting the service on resolution change forces the
-  // <img> to re-request the stream instead of replaying stale chunks.
+  // <video> to re-request the stream instead of replaying stale chunks.
   const [streamKey, setStreamKey] = useState(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  const isLive = camera.enabled && !error;
+
+  useEffect(() => {
+    onLiveChange?.(isLive);
+  }, [isLive, onLiveChange]);
+
+  useEffect(() => {
+    if (!camera.enabled) return;
+    if (!isLive) return;
+    const video = videoRef.current;
+    if (!video) return;
+    setError(false);
+
+    let hls: Hls | null = null;
+    if (Hls.isSupported()) {
+      hls = new Hls({
+        lowLatencyMode: true,
+        // Stay close to live: ~2s sync target, 5s upper bound. The HLS
+        // segments themselves are 1s so this leaves only a couple of
+        // segments of jitter buffer.
+        liveSyncDuration: 2,
+        liveMaxLatencyDuration: 5,
+        maxBufferLength: 6,
+        // The boat's playlist always has omit_endlist; treat it as live.
+        liveDurationInfinity: true,
+      });
+      hls.loadSource(HLS_URL);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) setError(true);
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari (incl. iOS) plays HLS natively without hls.js.
+      video.src = HLS_URL;
+      video.onerror = () => setError(true);
+    } else {
+      setError(true);
+    }
+
+    return () => {
+      if (hls) hls.destroy();
+    };
+  }, [camera.enabled, streamKey, isLive]);
+
+  // Auto-retry after a fatal error so the stream recovers when the boat is
+  // reachable again — without this the box stays hidden until the user toggles.
+  useEffect(() => {
+    if (!camera.enabled || !error) return;
+    const t = setInterval(() => {
+      setError(false);
+      setStreamKey(k => k + 1);
+    }, 8000);
+    return () => clearInterval(t);
+  }, [camera.enabled, error]);
 
   const toggleEnabled = () => {
     setCameraSettings({ ...camera, enabled: !camera.enabled });
@@ -141,13 +206,13 @@ export default function CameraView() {
 
       <div className="w-full h-full rounded-2xl overflow-hidden bg-black/60 border border-white/10">
         {camera.enabled && !error ? (
-          <img
+          <video
             key={streamKey}
-            src={CAMERA_URL}
-            alt="Live camera feed"
+            ref={videoRef}
+            autoPlay
+            muted
+            playsInline
             className="w-full h-full object-contain rotate-180"
-            onError={() => setError(true)}
-            onLoad={() => setError(false)}
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center text-white/30 gap-2">

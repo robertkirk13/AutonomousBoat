@@ -135,6 +135,47 @@ export const CAMERA_RESOLUTIONS: { label: string; width: number; height: number 
 
 export const CAMERA_FPS_OPTIONS: number[] = [5, 10, 15, 30];
 
+// Per-motor calibration sent to firmware via retained MQTT.
+// `*_trim` is a multiplicative scale (0.5..1.0) applied to thrust before PWM;
+// `*_invert` flips the sign so a forward command physically drives reverse.
+export interface MotorConfig {
+  left_invert: boolean;
+  right_invert: boolean;
+  left_trim: number;
+  right_trim: number;
+}
+
+export const DEFAULT_MOTOR_CONFIG: MotorConfig = {
+  left_invert: false,
+  right_invert: false,
+  left_trim: 1.0,
+  right_trim: 1.0,
+};
+
+// Tunable autopilot parameters; defaults match the firmware fallbacks in
+// types.rs / nav.rs so the boat behaves identically before any tuning.
+export interface NavParams {
+  cruise_thrust: number;
+  approach_thrust: number;
+  hard_turn_thrust: number;
+  straight_error_deg: number;
+  hard_turn_error_deg: number;
+  min_inner_thrust: number;
+  max_slew_per_tick: number;
+  close_approach_m: number;
+}
+
+export const DEFAULT_NAV_PARAMS: NavParams = {
+  cruise_thrust: 0.55,
+  approach_thrust: 0.32,
+  hard_turn_thrust: 0.32,
+  straight_error_deg: 10.0,
+  hard_turn_error_deg: 60.0,
+  min_inner_thrust: 0.10,
+  max_slew_per_tick: 0.12,
+  close_approach_m: 8.0,
+};
+
 // --- Composite boat state built from MQTT ---
 
 export interface BoatState {
@@ -177,10 +218,52 @@ export interface MeasurementData {
 }
 
 export type ControlMode = 'autonomous' | 'teleop';
-export type WaypointMode = 'manual' | 'area';
+
+// Active map-click tool. 'none' means clicks do nothing on the map — the user
+// must explicitly pick a drawing tool. 'waypoint' adds waypoints, 'area'
+// builds a polygon for coverage-path generation, 'zone-allow' / 'zone-exclude'
+// build a polygon for an allow/exclusion zone.
+export type ClickMode = 'none' | 'waypoint' | 'area' | 'zone-allow' | 'zone-exclude';
 
 export interface AreaCoverageConfig {
   lineSpacing: number;
   angle: number;
   polygon: { lat: number; lng: number }[];
+}
+
+export type ZoneKind = 'allow' | 'exclude';
+
+export interface Zone {
+  id: string;
+  kind: ZoneKind;
+  name: string;
+  vertices: { lat: number; lng: number }[];
+}
+
+export interface SavedMissionWaypoint {
+  lat: number;
+  lng: number;
+  name: string;
+  takeMeasurement: boolean;
+  measurementTypes: MeasurementType[];
+}
+
+export interface SavedMission {
+  id: string;
+  name: string;
+  waypoints: SavedMissionWaypoint[];
+  dataCollection: DataCollectionConfig;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ScheduleRepeat = 'none' | 'hourly' | 'daily';
+
+export interface MissionSchedule {
+  id: string;
+  missionId: string;
+  startAt: number;
+  repeat: ScheduleRepeat;
+  enabled: boolean;
+  lastFiredAt: number | null;
 }

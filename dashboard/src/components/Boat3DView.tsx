@@ -7,7 +7,7 @@ interface BoatModelProps {
   quaternion: { w: number; x: number; y: number; z: number };
 }
 
-const BURNT_ORANGE = new THREE.Color('#c47a2a');
+const BURNT_ORANGE = new THREE.Color('#ffba66');
 // 225° = 180° (model faces backward in GLTF) + 45° (camera is at 45° azimuth)
 const YAW_OFFSET = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (225 * Math.PI) / 180);
 
@@ -45,7 +45,7 @@ function BoatModel({ quaternion }: BoatModelProps) {
   return (
     <group ref={groupRef}>
       {/* Clone gives each instance its own copy of the scene graph */}
-      <group ref={innerRef} rotation={[Math.PI / 2, Math.PI, 0]} scale={1.2}>
+      <group ref={innerRef} rotation={[Math.PI / 2, Math.PI, 0]} scale={1.8}>
         <Clone object={scene} position={centerOffset} />
       </group>
     </group>

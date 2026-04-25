@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigation } from '../context/NavigationContext';
 import { PowerPanel } from './PowerPanel';
-import type { Ina228Reading, NetworkData } from '../types/index';
+import type { Ina228Reading, NetworkData, MotorConfig, NavParams } from '../types/index';
+import { DEFAULT_MOTOR_CONFIG, DEFAULT_NAV_PARAMS } from '../types/index';
 
 function Section({ title, children, accent }: {
   title: string;
@@ -104,9 +105,23 @@ function CompassRing({ heading, size = 80 }: { heading: number; size?: number })
 }
 
 export default function TelemetryPanel() {
-  const { boat, calibrateUpright, calibrateCompass, triggerGpsCalibration, triggerGpsCalibrationReset, rebootPi } = useNavigation();
+  const {
+    boat,
+    calibrateUpright,
+    calibrateCompass,
+    triggerGpsCalibration,
+    triggerGpsCalibrationReset,
+    rebootPi,
+    powerOffPi,
+    motorConfig,
+    setMotorConfig,
+    navParams,
+    setNavParams,
+  } = useNavigation();
   const uptimeSeconds = Math.floor(boat.uptime);
   const [motorModalOpen, setMotorModalOpen] = useState(false);
+  const [motorTuningOpen, setMotorTuningOpen] = useState(false);
+  const [controllerTuningOpen, setControllerTuningOpen] = useState(false);
 
   const findChannel = (label: string) =>
     boat.power?.channels.find((ch) => ch.label === label);
@@ -297,7 +312,7 @@ export default function TelemetryPanel() {
         )}
       </Section>
 
-      {/* Calibration dropdown */}
+      {/* Settings dropdown */}
       <div className="mt-auto">
         <div className="h-px bg-white/[0.04] mx-3" />
         <div className="px-3.5 py-2.5">
@@ -305,9 +320,15 @@ export default function TelemetryPanel() {
             <DropdownMenu.Trigger asChild>
               <button
                 type="button"
-                className="w-full flex items-center justify-between px-2.5 py-2 text-[10px] font-medium tracking-wide rounded-lg bg-white/[0.04] border border-white/[0.06] text-white/50 hover:text-white/80 hover:bg-white/[0.08] transition-colors"
+                className="w-full flex items-center justify-between px-2.5 py-2 text-[10px] font-medium tracking-wide rounded-lg bg-white/[0.04] border border-white/[0.06] text-white/55 hover:text-white/85 hover:bg-white/[0.08] transition-colors"
               >
-                Calibrate
+                <span className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.591 1.073c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.073 2.59c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.073 2.591c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.591 1.073c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.591-1.073c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.073-2.591c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.073-2.59c-.94-1.544.826-3.31 2.37-2.37.996.608 2.296.07 2.591-1.073z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Settings
+                </span>
                 <svg className="w-3 h-3 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
                 </svg>
@@ -315,62 +336,62 @@ export default function TelemetryPanel() {
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content
-                className="min-w-[160px] bg-[#1a1c24] border border-white/[0.08] rounded-xl p-1 shadow-xl shadow-black/50 backdrop-blur-xl z-[9999]"
+                className="min-w-[200px] bg-panel/85 border border-panel-border/60 rounded-xl p-1.5 shadow-2xl shadow-black/60 backdrop-blur-2xl z-[9999]"
                 sideOffset={6}
                 align="center"
                 side="top"
               >
-                <DropdownMenu.Item
-                  className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-white/60 hover:text-white/90 hover:bg-white/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
-                  onSelect={calibrateUpright}
-                >
-                  <svg className="w-3.5 h-3.5 text-white/35" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-4 4m4-4l4 4" />
-                  </svg>
-                  Set Upright
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-white/60 hover:text-white/90 hover:bg-white/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
-                  onSelect={calibrateCompass}
-                >
-                  <svg className="w-3.5 h-3.5 text-white/35" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l2.09 6.26L20 9.27l-5 3.64L16.18 20 12 16.9 7.82 20 9 12.91l-5-3.64 5.91-1.01L12 2z" />
-                  </svg>
-                  Set North
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-white/60 hover:text-white/90 hover:bg-white/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
-                  onSelect={triggerGpsCalibration}
-                >
-                  <svg className="w-3.5 h-3.5 text-white/35" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 4v12m-6-6h12" />
-                  </svg>
-                  Cal GPS
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-white/60 hover:text-white/90 hover:bg-white/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
-                  onSelect={triggerGpsCalibrationReset}
-                >
-                  <svg className="w-3.5 h-3.5 text-white/35" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M6 18L18 6" />
-                  </svg>
-                  Clear GPS
-                </DropdownMenu.Item>
+                <SettingsSectionLabel>Calibrate</SettingsSectionLabel>
+                <SettingsItem onSelect={calibrateUpright} icon={<IconArrow />}>Set Upright</SettingsItem>
+                <SettingsItem onSelect={calibrateCompass} icon={<IconStar />}>Set North</SettingsItem>
+                <SettingsItem onSelect={triggerGpsCalibration} icon={<IconGps />}>Set GPS Origin</SettingsItem>
+                <SettingsItem onSelect={triggerGpsCalibrationReset} icon={<IconX />}>Clear GPS Offset</SettingsItem>
+
                 <DropdownMenu.Separator className="h-px bg-white/[0.06] my-1" />
-                <DropdownMenu.Item
-                  className="flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-medium text-red-400/70 hover:text-red-400 hover:bg-red-500/[0.06] rounded-lg outline-none cursor-pointer transition-colors"
-                  onSelect={rebootPi}
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
+                <SettingsSectionLabel>Tuning</SettingsSectionLabel>
+                <SettingsItem onSelect={() => setMotorTuningOpen(true)} icon={<IconSliders />}>
+                  Motor Tuning
+                </SettingsItem>
+                <SettingsItem onSelect={() => setControllerTuningOpen(true)} icon={<IconWaveform />}>
+                  Controller Tuning
+                </SettingsItem>
+
+                <DropdownMenu.Separator className="h-px bg-white/[0.06] my-1" />
+                <SettingsSectionLabel>System</SettingsSectionLabel>
+                <SettingsItem onSelect={rebootPi} tone="warn" icon={<IconReboot />}>
                   Reboot Pi
-                </DropdownMenu.Item>
+                </SettingsItem>
+                <SettingsItem
+                  onSelect={() => {
+                    if (window.confirm('Power off the boat? It will stop responding until you physically power-cycle.')) {
+                      powerOffPi();
+                    }
+                  }}
+                  tone="danger"
+                  icon={<IconPower />}
+                >
+                  Power Off
+                </SettingsItem>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
         </div>
       </div>
+
+      {motorTuningOpen && (
+        <MotorTuningModal
+          config={motorConfig}
+          onChange={setMotorConfig}
+          onClose={() => setMotorTuningOpen(false)}
+        />
+      )}
+      {controllerTuningOpen && (
+        <ControllerTuningModal
+          params={navParams}
+          onChange={setNavParams}
+          onClose={() => setControllerTuningOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -773,11 +794,13 @@ function MotorControlModal({
     sendTeleop,
     reinitMotors,
     calibrateMotors,
-    leftInverted,
-    rightInverted,
-    setLeftInverted,
-    setRightInverted,
+    motorConfig,
+    setMotorConfig,
   } = useNavigation();
+  const leftInverted = motorConfig.left_invert;
+  const rightInverted = motorConfig.right_invert;
+  const setLeftInverted = (v: boolean) => setMotorConfig({ ...motorConfig, left_invert: v });
+  const setRightInverted = (v: boolean) => setMotorConfig({ ...motorConfig, right_invert: v });
   const [leftCmd, setLeftCmd] = useState(0);
   const [rightCmd, setRightCmd] = useState(0);
   const [linked, setLinked] = useState(false);
@@ -1197,5 +1220,402 @@ function MotorBar({ label, thrust, current, temp }: {
         </div>
       )}
     </div>
+  );
+}
+
+// --- Settings menu helpers ---
+
+function SettingsSectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-2.5 pt-1.5 pb-1 text-[9px] font-medium tracking-[0.14em] uppercase text-white/30">
+      {children}
+    </div>
+  );
+}
+
+function SettingsItem({
+  children,
+  onSelect,
+  icon,
+  tone = 'default',
+}: {
+  children: React.ReactNode;
+  onSelect: () => void;
+  icon: React.ReactNode;
+  tone?: 'default' | 'warn' | 'danger';
+}) {
+  const toneClass =
+    tone === 'danger'
+      ? 'text-red-400/80 hover:text-red-300 hover:bg-red-500/[0.08]'
+      : tone === 'warn'
+        ? 'text-amber-300/80 hover:text-amber-300 hover:bg-amber-500/[0.08]'
+        : 'text-white/65 hover:text-white/95 hover:bg-white/[0.06]';
+  return (
+    <DropdownMenu.Item
+      className={`flex items-center gap-2.5 px-2.5 py-1.5 text-[11px] font-medium rounded-lg outline-none cursor-pointer transition-colors ${toneClass}`}
+      onSelect={onSelect}
+    >
+      <span className="w-3.5 h-3.5 flex items-center justify-center opacity-75">{icon}</span>
+      {children}
+    </DropdownMenu.Item>
+  );
+}
+
+const ICON_PROPS = {
+  className: 'w-3.5 h-3.5',
+  fill: 'none' as const,
+  viewBox: '0 0 24 24',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  'aria-hidden': true,
+};
+
+function IconArrow() {
+  return (
+    <svg {...ICON_PROPS}><path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-4 4m4-4l4 4" /></svg>
+  );
+}
+function IconStar() {
+  return (
+    <svg {...ICON_PROPS}><path strokeLinecap="round" strokeLinejoin="round" d="M12 2l2.09 6.26L20 9.27l-5 3.64L16.18 20 12 16.9 7.82 20 9 12.91l-5-3.64 5.91-1.01L12 2z" /></svg>
+  );
+}
+function IconGps() {
+  return (
+    <svg {...ICON_PROPS}><path strokeLinecap="round" strokeLinejoin="round" d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 4v12m-6-6h12" /></svg>
+  );
+}
+function IconX() {
+  return (
+    <svg {...ICON_PROPS}><path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M6 18L18 6" /></svg>
+  );
+}
+function IconSliders() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h10m4 0h2M4 12h4m4 0h10M4 18h14m4 0h-2" />
+      <circle cx={15} cy={6} r={1.6} />
+      <circle cx={10} cy={12} r={1.6} />
+      <circle cx={19} cy={18} r={1.6} />
+    </svg>
+  );
+}
+function IconWaveform() {
+  return (
+    <svg {...ICON_PROPS}><path strokeLinecap="round" strokeLinejoin="round" d="M3 12h3l2-6 4 12 3-9 2 6 2-3h2" /></svg>
+  );
+}
+function IconReboot() {
+  return (
+    <svg {...ICON_PROPS}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+  );
+}
+function IconPower() {
+  return (
+    <svg {...ICON_PROPS}><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v9m6.36-5.36a9 9 0 11-12.72 0" /></svg>
+  );
+}
+
+// --- Tuning modals ---
+
+function TuningModalShell({
+  title,
+  subtitle,
+  onClose,
+  onReset,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+  onReset: () => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1999] pointer-events-auto bg-black/40" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(34rem,calc(100vw-4rem))] max-h-[85vh] z-[2000] pointer-events-auto rounded-2xl bg-panel/95 backdrop-blur-2xl border border-panel-border/60 shadow-2xl shadow-black/60 overflow-hidden flex flex-col"
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] gap-3">
+          <div className="flex flex-col min-w-0">
+            <span className="text-[10px] font-medium text-white/35 uppercase tracking-[0.12em]">Tuning</span>
+            <span className="text-sm text-white/85 font-medium">{title}</span>
+            {subtitle && <span className="text-[10px] text-white/40 mt-0.5">{subtitle}</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onReset}
+              className="px-2.5 py-1.5 text-[10px] font-mono rounded border bg-white/[0.04] border-white/[0.08] text-white/55 hover:text-white/85 hover:bg-white/[0.08] transition-colors"
+              title="Reset to defaults"
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-6 h-6 flex items-center justify-center rounded-md bg-black/40 hover:bg-black/60 text-white/50 hover:text-white/80 transition-colors"
+              title="Close"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} role="img" aria-label="Close">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 min-h-0 overflow-auto px-4 py-3">{children}</div>
+        <div className="px-4 py-2 border-t border-white/[0.06] text-[10px] text-white/35 leading-relaxed">
+          Saved on the boat — survives reboot.
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function TuneSlider({
+  label,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  unit,
+  precision = 2,
+  hint,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  min: number;
+  max: number;
+  step: number;
+  unit?: string;
+  precision?: number;
+  hint?: string;
+}) {
+  return (
+    <label className="block">
+      <div className="flex items-baseline justify-between mb-1">
+        <span className="text-[11px] text-white/55 font-medium">{label}</span>
+        <span className="text-[11px] font-mono text-white/85 tabular-nums">
+          {value.toFixed(precision)}
+          {unit && <span className="text-white/40 text-[10px] ml-0.5">{unit}</span>}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-teal"
+      />
+      {hint && <div className="text-[10px] text-white/30 mt-0.5">{hint}</div>}
+    </label>
+  );
+}
+
+function TuneToggle({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+  hint?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!value)}
+      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
+        value
+          ? 'bg-amber-400/15 border-amber-400/30 text-amber-200'
+          : 'bg-white/[0.03] border-white/[0.06] text-white/55 hover:text-white/85 hover:bg-white/[0.06]'
+      }`}
+    >
+      <span className="flex flex-col">
+        <span className="text-[11px] font-medium">{label}</span>
+        {hint && <span className="text-[10px] opacity-60 mt-0.5">{hint}</span>}
+      </span>
+      <span className={`text-[10px] font-mono uppercase tracking-wider ${value ? 'text-amber-300' : 'text-white/30'}`}>
+        {value ? 'ON' : 'OFF'}
+      </span>
+    </button>
+  );
+}
+
+function MotorTuningModal({
+  config,
+  onChange,
+  onClose,
+}: {
+  config: MotorConfig;
+  onChange: (next: MotorConfig) => void;
+  onClose: () => void;
+}) {
+  const update = (patch: Partial<MotorConfig>) => onChange({ ...config, ...patch });
+
+  return (
+    <TuningModalShell
+      title="Motor Tuning"
+      subtitle="Reverse and trim each motor. Trim scales thrust output."
+      onClose={onClose}
+      onReset={() => onChange(DEFAULT_MOTOR_CONFIG)}
+    >
+      <div className="grid grid-cols-2 gap-4">
+        <div className="flex flex-col gap-3">
+          <div className="text-[10px] font-medium text-white/40 uppercase tracking-[0.14em]">Port</div>
+          <TuneToggle
+            label="Reverse direction"
+            value={config.left_invert}
+            onChange={(v) => update({ left_invert: v })}
+            hint="Flips forward/reverse for this motor."
+          />
+          <TuneSlider
+            label="Trim"
+            value={config.left_trim}
+            onChange={(v) => update({ left_trim: v })}
+            min={0.5}
+            max={1.0}
+            step={0.01}
+            hint="Multiplier applied to thrust (1.0 = full)."
+          />
+        </div>
+        <div className="flex flex-col gap-3">
+          <div className="text-[10px] font-medium text-white/40 uppercase tracking-[0.14em]">Starboard</div>
+          <TuneToggle
+            label="Reverse direction"
+            value={config.right_invert}
+            onChange={(v) => update({ right_invert: v })}
+            hint="Flips forward/reverse for this motor."
+          />
+          <TuneSlider
+            label="Trim"
+            value={config.right_trim}
+            onChange={(v) => update({ right_trim: v })}
+            min={0.5}
+            max={1.0}
+            step={0.01}
+            hint="Multiplier applied to thrust (1.0 = full)."
+          />
+        </div>
+      </div>
+    </TuningModalShell>
+  );
+}
+
+function ControllerTuningModal({
+  params,
+  onChange,
+  onClose,
+}: {
+  params: NavParams;
+  onChange: (next: NavParams) => void;
+  onClose: () => void;
+}) {
+  const update = (patch: Partial<NavParams>) => onChange({ ...params, ...patch });
+
+  return (
+    <TuningModalShell
+      title="Controller Tuning"
+      subtitle="Heuristic autopilot parameters. Boat must be still or under teleop while editing."
+      onClose={onClose}
+      onReset={() => onChange(DEFAULT_NAV_PARAMS)}
+    >
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <TuneSlider
+          label="Cruise thrust"
+          value={params.cruise_thrust}
+          onChange={(v) => update({ cruise_thrust: v })}
+          min={0}
+          max={1}
+          step={0.01}
+          hint="Throttle on long straight runs."
+        />
+        <TuneSlider
+          label="Approach thrust"
+          value={params.approach_thrust}
+          onChange={(v) => update({ approach_thrust: v })}
+          min={0}
+          max={1}
+          step={0.01}
+          hint="Slower throttle when close to a waypoint."
+        />
+        <TuneSlider
+          label="Hard-turn thrust"
+          value={params.hard_turn_thrust}
+          onChange={(v) => update({ hard_turn_thrust: v })}
+          min={0}
+          max={1}
+          step={0.01}
+          hint="Outer-motor thrust during a sharp turn."
+        />
+        <TuneSlider
+          label="Min inner thrust"
+          value={params.min_inner_thrust}
+          onChange={(v) => update({ min_inner_thrust: v })}
+          min={0}
+          max={0.5}
+          step={0.01}
+          hint="Floor for the inner motor mid-turn."
+        />
+        <TuneSlider
+          label="Straight error"
+          value={params.straight_error_deg}
+          onChange={(v) => update({ straight_error_deg: v })}
+          min={0}
+          max={45}
+          step={1}
+          unit="°"
+          precision={0}
+          hint="Below this heading error: cruise straight."
+        />
+        <TuneSlider
+          label="Hard-turn error"
+          value={params.hard_turn_error_deg}
+          onChange={(v) => update({ hard_turn_error_deg: v })}
+          min={20}
+          max={120}
+          step={1}
+          unit="°"
+          precision={0}
+          hint="Above this heading error: stop inner motor."
+        />
+        <TuneSlider
+          label="Slew limit"
+          value={params.max_slew_per_tick}
+          onChange={(v) => update({ max_slew_per_tick: v })}
+          min={0.02}
+          max={0.5}
+          step={0.01}
+          hint="Max thrust change per 200ms tick."
+        />
+        <TuneSlider
+          label="Approach distance"
+          value={params.close_approach_m}
+          onChange={(v) => update({ close_approach_m: v })}
+          min={1}
+          max={30}
+          step={0.5}
+          unit="m"
+          precision={1}
+          hint="Switch to approach thrust within this range."
+        />
+      </div>
+    </TuningModalShell>
   );
 }

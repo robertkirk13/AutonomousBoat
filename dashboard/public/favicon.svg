@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#08090d"/>
+  <path d="M16 5 L16 17 L23 17 Z" fill="oklch(0.65 0.17 50)"/>
+  <path d="M14 8 L14 17 L8 17 Z" fill="oklch(0.65 0.17 50)" opacity="0.75"/>
+  <path d="M5 19 L27 19 L23.5 25 L8.5 25 Z" fill="oklch(0.65 0.17 50)"/>
+  <path d="M3 28 Q7 26.5 11 28 T19 28 T29 28" stroke="oklch(0.65 0.17 50)" stroke-width="1.4" stroke-linecap="round" fill="none" opacity="0.45"/>
+</svg>

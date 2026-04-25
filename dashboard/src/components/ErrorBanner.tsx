@@ -10,21 +10,14 @@ export default function ErrorBanner() {
 
   const alerts: Alert[] = [];
 
-  if (!boat.mqttConnected) {
-    alerts.push({
-      id: 'broker',
-      level: 'error',
-      title: 'No connection to broker',
-      detail: "Dashboard can't reach the MQTT cloud — check your internet.",
-    });
-  } else if (boat.boatOnline && boat.satellites === 0) {
-    // Only complain about GPS once we know the boat is otherwise alive.
-    // Pre-fix while booting is normal noise we don't want to flag.
+  // Broker-disconnected alert removed: it false-positived too often during
+  // normal mqtt.js reconnects. Surface only the GPS-fix issue, and only once
+  // the boat is otherwise alive (pre-fix while booting is normal).
+  if (boat.boatOnline && boat.satellites === 0) {
     alerts.push({
       id: 'gps',
       level: 'warn',
       title: 'No GPS fix',
-      detail: 'Waiting on satellite lock — position is unknown.',
     });
   }
 
@@ -43,7 +36,7 @@ interface Alert {
   id: string;
   level: 'error' | 'warn';
   title: string;
-  detail: string;
+  detail?: string;
 }
 
 function AlertPill({ alert }: { alert: Alert }) {
@@ -61,7 +54,7 @@ function AlertPill({ alert }: { alert: Alert }) {
       <span className={`w-2 h-2 rounded-full ${dot} animate-pulse`} />
       <div className="flex flex-col leading-tight">
         <span className="text-[12px] font-semibold tracking-tight">{alert.title}</span>
-        <span className="text-[10px] opacity-75">{alert.detail}</span>
+        {alert.detail && <span className="text-[10px] opacity-75">{alert.detail}</span>}
       </div>
     </div>
   );

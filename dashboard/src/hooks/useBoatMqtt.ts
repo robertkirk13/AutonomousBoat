@@ -10,11 +10,21 @@ import type {
   NetworkData,
   BoatState,
   CameraSettings,
+  MotorConfig,
+  NavParams,
 } from '../types/index';
-import { DEFAULT_CAMERA_SETTINGS } from '../types/index';
+import {
+  DEFAULT_CAMERA_SETTINGS,
+  DEFAULT_MOTOR_CONFIG,
+  DEFAULT_NAV_PARAMS,
+} from '../types/index';
 
 const HEARTBEAT_TIMEOUT = 5_000;
 const PING_INTERVAL = 3_000;
+// Grace period before declaring the broker disconnected. mqtt.js emits 'close'
+// on every transient WebSocket hiccup before attempting to reconnect; without
+// this delay the error banner flashes up briefly even on healthy connections.
+const MQTT_DISCONNECT_GRACE = 3_000;
 // Topic the dashboard publishes to (and subscribes to via boat/#) to measure
 // broker round-trip latency. The boat firmware ignores this prefix.
 const PING_TOPIC = 'boat/dashboard/ping';
@@ -119,21 +129,6 @@ function slerpQuat(a: Quat, b: Quat, t: number): Quat {
   };
 }
 
-/** Multiply two quaternions: a * b. */
-function mulQuat(a: Quat, b: Quat): Quat {
-  return {
-    w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
-    x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
-    y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-    z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
-  };
-}
-
-/** Conjugate (inverse for unit quaternions). */
-function invQuat(q: Quat): Quat {
-  return { w: q.w, x: -q.x, y: -q.y, z: -q.z };
-}
-
 function lerpPower(a: PowerData, b: PowerData, t: number): PowerData {
   return {
     channels: b.channels.map((ch, i) => {
@@ -214,8 +209,13 @@ function createChannel<T>() {
 export function useBoatMqtt() {
   const [boat, setBoat] = useState<BoatState>(DEFAULT_BOAT_STATE);
   const [camera, setCamera] = useState<CameraSettings>(DEFAULT_CAMERA_SETTINGS);
+  // Motor + nav configs are owned by the firmware (it persists them to disk).
+  // The dashboard mirrors the latest retained values for the UI.
+  const [motorConfig, setMotorConfigState] = useState<MotorConfig>(DEFAULT_MOTOR_CONFIG);
+  const [navParams, setNavParamsState] = useState<NavParams>(DEFAULT_NAV_PARAMS);
   const clientRef = useRef<mqtt.MqttClient | null>(null);
   const heartbeatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mqttDisconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusClockRef = useRef<{ uptimeSecs: number; receivedAt: number } | null>(null);
 
   // Interpolation channels for each data stream
@@ -238,27 +238,6 @@ export function useBoatMqtt() {
   // Per-ping send timestamps keyed by nonce so out-of-order replies are sane.
   const pingSentRef = useRef<Map<string, number>>(new Map());
 
-  // Upright calibration: stores inverse of the reference quaternion
-  const uprightRef = useRef<Quat | null>(null);
-  // Compass calibration: heading offset in degrees
-  const compassOffsetRef = useRef<number>(0);
-
-  const calibrateUpright = useCallback(() => {
-    // Snapshot the current raw quaternion; its inverse will zero-out the current tilt
-    const imu = imuChannel.current.sample();
-    if (!imu) return;
-    const raw = 't' in imu ? imuToQuat(imu.curr) : imuToQuat(imu.latest);
-    uprightRef.current = invQuat(raw);
-  }, []);
-
-  const calibrateCompass = useCallback(() => {
-    // Store current heading so it becomes the new "North" (0°)
-    const imu = imuChannel.current.sample();
-    if (!imu) return;
-    const raw = 't' in imu ? imu.curr : imu.latest;
-    compassOffsetRef.current = raw.heading;
-  }, []);
-
   const publish = useCallback((topic: string, payload: unknown) => {
     const client = clientRef.current;
     if (client?.connected) {
@@ -266,6 +245,40 @@ export function useBoatMqtt() {
       client.publish(topic, JSON.stringify(payload), { qos });
     }
   }, []);
+
+  const publishRetained = useCallback((topic: string, payload: unknown) => {
+    const client = clientRef.current;
+    if (client?.connected) {
+      client.publish(topic, JSON.stringify(payload), { qos: 1, retain: true });
+    }
+  }, []);
+
+  // Calibration is owned by the firmware: it captures the snapshot from its
+  // own current IMU reading, applies it before publishing, and writes the
+  // values to its on-disk state file.
+  const calibrateUpright = useCallback(() => {
+    publish('boat/command', { action: 'calibrate_upright' });
+  }, [publish]);
+
+  const calibrateCompass = useCallback(() => {
+    publish('boat/command', { action: 'calibrate_compass' });
+  }, [publish]);
+
+  const setMotorConfig = useCallback(
+    (next: MotorConfig) => {
+      setMotorConfigState(next);
+      publishRetained('boat/motor/config', next);
+    },
+    [publishRetained],
+  );
+
+  const setNavParams = useCallback(
+    (next: NavParams) => {
+      setNavParamsState(next);
+      publishRetained('boat/control/params', next);
+    },
+    [publishRetained],
+  );
 
   // MQTT connection: pushes raw data into channels
   useEffect(() => {
@@ -308,6 +321,11 @@ export function useBoatMqtt() {
     };
 
     client.on('connect', () => {
+      // Cancel any pending "declare disconnected" timer from a recent close.
+      if (mqttDisconnectTimer.current) {
+        clearTimeout(mqttDisconnectTimer.current);
+        mqttDisconnectTimer.current = null;
+      }
       connState.current.mqttConnected = true;
       client.subscribe('boat/#');
       // Kick off ping loop. The broker echoes our publish back via the
@@ -318,8 +336,6 @@ export function useBoatMqtt() {
     });
 
     client.on('close', () => {
-      connState.current.mqttConnected = false;
-      connState.current.boatOnline = false;
       latencyRef.current = null;
       pingSentRef.current.clear();
       if (heartbeatTimer.current) clearTimeout(heartbeatTimer.current);
@@ -327,6 +343,15 @@ export function useBoatMqtt() {
         clearInterval(pingTimer);
         pingTimer = null;
       }
+      // Don't immediately flip the broker-down flag. mqtt.js fires 'close' on
+      // every reconnect attempt; if 'connect' arrives within the grace window
+      // the user never sees the error banner.
+      if (mqttDisconnectTimer.current) clearTimeout(mqttDisconnectTimer.current);
+      mqttDisconnectTimer.current = setTimeout(() => {
+        connState.current.mqttConnected = false;
+        connState.current.boatOnline = false;
+        mqttDisconnectTimer.current = null;
+      }, MQTT_DISCONNECT_GRACE);
     });
 
     client.on('message', (topic: string, payload: Buffer) => {
@@ -388,6 +413,17 @@ export function useBoatMqtt() {
               fps: Number(data.fps) || DEFAULT_CAMERA_SETTINGS.fps,
             });
             break;
+          case 'boat/motor/config':
+            setMotorConfigState({
+              left_invert: !!data.left_invert,
+              right_invert: !!data.right_invert,
+              left_trim: Number.isFinite(data.left_trim) ? data.left_trim : DEFAULT_MOTOR_CONFIG.left_trim,
+              right_trim: Number.isFinite(data.right_trim) ? data.right_trim : DEFAULT_MOTOR_CONFIG.right_trim,
+            });
+            break;
+          case 'boat/control/params':
+            setNavParamsState({ ...DEFAULT_NAV_PARAMS, ...data });
+            break;
         }
       } catch {
         // ignore parse errors
@@ -398,6 +434,7 @@ export function useBoatMqtt() {
       client.end();
       clientRef.current = null;
       if (heartbeatTimer.current) clearTimeout(heartbeatTimer.current);
+      if (mqttDisconnectTimer.current) clearTimeout(mqttDisconnectTimer.current);
       if (pingTimer) clearInterval(pingTimer);
     };
   }, []);
@@ -429,16 +466,6 @@ export function useBoatMqtt() {
           pitch = imu.latest.pitch;
           quaternion = imuToQuat(imu.latest);
         }
-      }
-
-      // Apply compass calibration offset to heading
-      if (compassOffsetRef.current !== 0) {
-        heading = ((heading - compassOffsetRef.current) % 360 + 360) % 360;
-      }
-
-      // Apply upright calibration offset
-      if (uprightRef.current) {
-        quaternion = mulQuat(uprightRef.current, quaternion);
       }
 
       // Interpolate GPS (sats is an integer count — take latest, no interp)
@@ -544,6 +571,10 @@ export function useBoatMqtt() {
     publish('boat/command', { action: 'reboot' });
   }, [publish]);
 
+  const powerOffPi = useCallback(() => {
+    publish('boat/command', { action: 'shutdown' });
+  }, [publish]);
+
   const setCameraSettings = useCallback(
     (next: CameraSettings) => {
       publish('boat/command', { action: 'camera_set', ...next });
@@ -554,10 +585,15 @@ export function useBoatMqtt() {
   return {
     boat,
     camera,
+    motorConfig,
+    navParams,
     publish,
     calibrateUpright,
     calibrateCompass,
     rebootPi,
+    powerOffPi,
     setCameraSettings,
+    setMotorConfig,
+    setNavParams,
   };
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useNavigation } from '../context/NavigationContext';
+import { useReplayContext } from '../context/ReplayContext';
 
 type LeafletModule = typeof import('leaflet');
 type ReactLeafletModule = typeof import('react-leaflet');
@@ -69,7 +70,7 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
   const {
     mapCenter,
     setMapCenter,
-    waypointMode,
+    clickMode,
     areaCoverage,
     addPolygonVertex,
     controlMode,
@@ -77,7 +78,37 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
     clearGpsOffset,
     registerGpsCalibrationTrigger,
     registerGpsCalibrationResetTrigger,
+    duplicateWaypoint,
+    removeWaypoint,
+    moveWaypoint,
+    setWaypointAsStart,
+    insertWaypointAt,
+    zones,
+    draftZone,
+    addDraftZoneVertex,
   } = useNavigation();
+  const [waypointMenu, setWaypointMenu] = useState<{
+    waypointId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const closeWaypointMenu = useCallback(() => setWaypointMenu(null), []);
+  const { mode: replayMode, liveTrail, trail: replayTrail, cursor: replayCursor } = useReplayContext();
+
+  // Trail polyline. Live mode: rolling 30 min from the history API.
+  // Replay mode: full session up to cursor — gives a "where the boat
+  // has been so far" feel as playback advances.
+  const trailPath = useMemo<[number, number][]>(() => {
+    if (replayMode === 'replay') {
+      const out: [number, number][] = [];
+      for (const p of replayTrail) {
+        if (p.ts > replayCursor) break;
+        out.push([p.lat, p.lon]);
+      }
+      return out;
+    }
+    return liveTrail.map((p) => [p.lat, p.lon] as [number, number]);
+  }, [replayMode, liveTrail, replayTrail, replayCursor]);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [mapMode, setMapMode] = useState<'map' | 'satellite'>('map');
   const [gpsCalibration, setGpsCalibration] = useState<{
@@ -113,17 +144,18 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
     useMapEvents({
       click: (e: { latlng: { lat: number; lng: number } }) => {
         if (controlMode === 'teleop') return;
-        if (mission.status === 'idle' || mission.status === 'planning') {
-          if (waypointMode === 'manual') {
-            addWaypoint(e.latlng.lat, e.latlng.lng);
-          } else if (waypointMode === 'area') {
-            addPolygonVertex(e.latlng.lat, e.latlng.lng);
-          }
+        const editable = mission.status === 'idle' || mission.status === 'planning';
+        if (clickMode === 'waypoint' && editable) {
+          addWaypoint(e.latlng.lat, e.latlng.lng);
+        } else if (clickMode === 'area' && editable) {
+          addPolygonVertex(e.latlng.lat, e.latlng.lng);
+        } else if (clickMode === 'zone-allow' || clickMode === 'zone-exclude') {
+          addDraftZoneVertex(e.latlng.lat, e.latlng.lng);
         }
       },
     });
     return null;
-  }, [mission.status, waypointMode, controlMode, addWaypoint, addPolygonVertex]);
+  }, [mission.status, clickMode, controlMode, addWaypoint, addPolygonVertex, addDraftZoneVertex]);
 
   const mapRef = useRef<L.Map | null>(null);
   const boatPositionRef = useRef(boat.position);
@@ -298,21 +330,34 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
       const completed = waypoint.completed || false;
       const isActive = mission.currentWaypointIndex === index;
       const hasMeasurement = waypoint.takeMeasurement;
+      const isFirst = index === 0;
 
-      const bgColor = completed ? 'rgba(34, 197, 94, 0.9)' : isActive ? 'rgba(245, 158, 11, 0.9)' : 'rgba(255, 255, 255, 0.15)';
-      const borderColor = completed ? 'rgba(34, 197, 94, 1)' : isActive ? 'rgba(245, 158, 11, 1)' : 'rgba(255, 255, 255, 0.4)';
-      const textColor = completed || isActive ? 'white' : 'rgba(255, 255, 255, 0.8)';
+      const bgColor = completed
+        ? 'rgba(34, 197, 94, 0.9)'
+        : isActive
+        ? 'rgba(245, 158, 11, 0.9)'
+        : isFirst
+        ? 'rgba(20, 184, 166, 0.32)'
+        : 'rgba(255, 255, 255, 0.15)';
+      const borderColor = completed
+        ? 'rgba(34, 197, 94, 1)'
+        : isActive
+        ? 'rgba(245, 158, 11, 1)'
+        : isFirst
+        ? 'rgba(20, 184, 166, 0.85)'
+        : 'rgba(255, 255, 255, 0.4)';
+      const textColor = completed || isActive ? 'white' : 'rgba(255, 255, 255, 0.85)';
 
       icons[waypoint.id] = L.divIcon({
         className: 'waypoint-marker',
         html: `
-          <div style="width:32px;height:32px;border-radius:50%;background:${bgColor};border:2px solid ${borderColor};display:flex;align-items:center;justify-content:center;color:${textColor};font-weight:600;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.4);position:relative;backdrop-filter:blur(8px);">
-            ${completed ? `<svg style="width:16px;height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>` : index + 1}
-            ${hasMeasurement ? `<div style="position:absolute;top:-3px;right:-3px;width:12px;height:12px;background:rgba(255,255,255,0.9);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:7px;color:rgba(0,0,0,0.7);font-weight:700;">M</div>` : ''}
+          <div style="width:22px;height:22px;border-radius:50%;background:${bgColor};border:1.5px solid ${borderColor};display:flex;align-items:center;justify-content:center;color:${textColor};font-weight:600;font-size:10px;box-shadow:0 1px 5px rgba(0,0,0,0.35);position:relative;backdrop-filter:blur(8px);cursor:pointer;">
+            ${completed ? `<svg style="width:11px;height:11px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>` : index + 1}
+            ${hasMeasurement ? `<div style="position:absolute;top:-2px;right:-2px;width:9px;height:9px;background:rgba(255,255,255,0.95);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:6px;color:rgba(0,0,0,0.7);font-weight:700;">M</div>` : ''}
           </div>
         `,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
       });
     });
 
@@ -328,6 +373,18 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
     });
   }, [L]);
 
+  const zoneVertexIcon = useCallback((kind: 'allow' | 'exclude') => {
+    const fill = kind === 'allow' ? 'rgba(20,184,166,0.95)' : 'rgba(239,68,68,0.95)';
+    return L.divIcon({
+      className: 'zone-vertex-marker',
+      html: `<div style="width:14px;height:14px;border-radius:50%;background:${fill};border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.45);"></div>`,
+      iconSize: [14, 14],
+      iconAnchor: [7, 7],
+    });
+  }, [L]);
+
+  const isDrawing = clickMode !== 'none';
+
   const waypointPath = mission.waypoints.map((wp) => [wp.lat, wp.lng] as [number, number]);
 
   const fullPath = mission.status === 'running' && mission.currentWaypointIndex >= 0
@@ -335,10 +392,11 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
     : waypointPath;
 
   return (
-    <div className="w-full h-full relative">
+    <div className={`w-full h-full relative ${isDrawing ? 'map-drawing' : ''}`}>
       <MapContainer
         center={[mapCenter.lat, mapCenter.lng]}
         zoom={15}
+        maxZoom={20}
         className="w-full h-full"
         style={{ background: '#1a1a1a' }}
         ref={mapRef}
@@ -348,16 +406,27 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
             key="map"
             attribution='&copy; <a href="https://stadiamaps.com/" target="_blank">Stadia Maps</a>'
             url="https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png"
+            maxNativeZoom={20}
+            maxZoom={20}
           />
         ) : (
           <TileLayer
             key="satellite"
             attribution='&copy; <a href="https://www.esri.com/" target="_blank">Esri</a>'
             url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            maxNativeZoom={19}
+            maxZoom={20}
           />
         )}
 
         <MapClickHandler />
+
+        {trailPath.length > 1 && (
+          <Polyline
+            positions={trailPath}
+            pathOptions={{ color: 'rgba(245, 158, 11, 0.55)', weight: 3, opacity: 1 }}
+          />
+        )}
 
         {fullPath.length > 1 && (
           <Polyline
@@ -376,9 +445,34 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
           />
         )}
 
-        {mission.waypoints.map((waypoint) => (
-          <Marker key={waypoint.id} position={[waypoint.lat, waypoint.lng]} icon={waypointIcons[waypoint.id]} />
-        ))}
+        {mission.waypoints.map((waypoint) => {
+          const canEdit = (mission.status === 'idle' || mission.status === 'planning')
+            && controlMode === 'autonomous'
+            && clickMode === 'waypoint';
+          return (
+            <Marker
+              key={waypoint.id}
+              position={[waypoint.lat, waypoint.lng]}
+              icon={waypointIcons[waypoint.id]}
+              eventHandlers={{
+                click: (e: L.LeafletMouseEvent) => {
+                  if (!canEdit) return;
+                  L.DomEvent.stopPropagation(e.originalEvent);
+                  duplicateWaypoint(waypoint.id);
+                },
+                contextmenu: (e: L.LeafletMouseEvent) => {
+                  e.originalEvent.preventDefault();
+                  L.DomEvent.stopPropagation(e.originalEvent);
+                  setWaypointMenu({
+                    waypointId: waypoint.id,
+                    x: e.originalEvent.clientX,
+                    y: e.originalEvent.clientY,
+                  });
+                },
+              }}
+            />
+          );
+        })}
 
         {areaCoverage.polygon.length > 0 && (
           <>
@@ -399,6 +493,53 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
             ))}
           </>
         )}
+
+        {zones.map((zone) => {
+          const stroke = zone.kind === 'allow' ? 'rgba(20, 184, 166, 0.85)' : 'rgba(239, 68, 68, 0.85)';
+          const fill = zone.kind === 'allow' ? 'rgba(20, 184, 166, 0.10)' : 'rgba(239, 68, 68, 0.18)';
+          return (
+            <Polygon
+              key={zone.id}
+              positions={zone.vertices.map(v => [v.lat, v.lng] as [number, number])}
+              pathOptions={{
+                color: stroke,
+                weight: 2,
+                fillColor: fill,
+                fillOpacity: 1,
+                dashArray: zone.kind === 'exclude' ? '6, 6' : undefined,
+              }}
+            />
+          );
+        })}
+
+        {draftZone && draftZone.vertices.length > 0 && (() => {
+          const stroke = draftZone.kind === 'allow' ? 'rgba(20, 184, 166, 0.95)' : 'rgba(239, 68, 68, 0.95)';
+          const fill = draftZone.kind === 'allow' ? 'rgba(20, 184, 166, 0.12)' : 'rgba(239, 68, 68, 0.18)';
+          return (
+            <>
+              {draftZone.vertices.length >= 3 ? (
+                <Polygon
+                  positions={draftZone.vertices.map(v => [v.lat, v.lng] as [number, number])}
+                  pathOptions={{
+                    color: stroke,
+                    weight: 2,
+                    dashArray: '6, 4',
+                    fillColor: fill,
+                    fillOpacity: 1,
+                  }}
+                />
+              ) : draftZone.vertices.length === 2 ? (
+                <Polyline
+                  positions={draftZone.vertices.map(v => [v.lat, v.lng] as [number, number])}
+                  pathOptions={{ color: stroke, weight: 2, dashArray: '6, 4' }}
+                />
+              ) : null}
+              {draftZone.vertices.map((v, i) => (
+                <Marker key={`draft-zone-${i}`} position={[v.lat, v.lng]} icon={zoneVertexIcon(draftZone.kind)} />
+              ))}
+            </>
+          );
+        })()}
 
         <Marker position={[boat.position.lat, boat.position.lng]} icon={boatIcon} />
 
@@ -447,6 +588,74 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
           </div>
         )}
       </div>
+
+      {waypointMenu && (() => {
+        const wpIndex = mission.waypoints.findIndex(w => w.id === waypointMenu.waypointId);
+        if (wpIndex === -1) return null;
+        const total = mission.waypoints.length;
+        const canEdit = mission.status === 'idle' || mission.status === 'planning';
+        const items: Array<{ label: string; onSelect: () => void; disabled?: boolean; tone?: 'danger' }> = [
+          {
+            label: 'Loop Here (append copy)',
+            onSelect: () => duplicateWaypoint(waypointMenu.waypointId),
+            disabled: !canEdit,
+          },
+          {
+            label: 'Insert Boat Position After',
+            onSelect: () => insertWaypointAt(boat.position.lat, boat.position.lng, waypointMenu.waypointId),
+            disabled: !canEdit || !boat.boatOnline,
+          },
+          {
+            label: 'Set as Start',
+            onSelect: () => setWaypointAsStart(waypointMenu.waypointId),
+            disabled: !canEdit || wpIndex === 0,
+          },
+          {
+            label: 'Move Up',
+            onSelect: () => moveWaypoint(waypointMenu.waypointId, 'up'),
+            disabled: !canEdit || wpIndex === 0,
+          },
+          {
+            label: 'Move Down',
+            onSelect: () => moveWaypoint(waypointMenu.waypointId, 'down'),
+            disabled: !canEdit || wpIndex === total - 1,
+          },
+          {
+            label: 'Delete',
+            onSelect: () => removeWaypoint(waypointMenu.waypointId),
+            disabled: !canEdit,
+            tone: 'danger',
+          },
+        ];
+        return (
+          <>
+            <div className="fixed inset-0 z-[1599]" onClick={closeWaypointMenu} onContextMenu={(e) => { e.preventDefault(); closeWaypointMenu(); }} />
+            <div
+              className="fixed z-[1600] min-w-[12rem] rounded-xl border border-white/[0.08] bg-[#171922]/95 p-1 shadow-2xl shadow-black/60 backdrop-blur-xl"
+              style={{ left: waypointMenu.x + 4, top: waypointMenu.y + 4 }}
+            >
+              <div className="px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-white/35 border-b border-white/[0.05] mb-1">
+                Waypoint {wpIndex + 1}
+              </div>
+              {items.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  disabled={item.disabled}
+                  onClick={() => { item.onSelect(); closeWaypointMenu(); }}
+                  className={`w-full text-left px-2.5 py-1.5 text-[11px] rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                    item.tone === 'danger'
+                      ? 'text-red-300 hover:bg-red-500/15'
+                      : 'text-white/75 hover:bg-white/[0.08] hover:text-white/90'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

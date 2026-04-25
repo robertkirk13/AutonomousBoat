@@ -88,9 +88,15 @@ body {
 .leaflet-control-zoom-in { border-radius: 10px 10px 0 0 !important; border-bottom: none !important; }
 .leaflet-control-zoom-out { border-radius: 0 0 10px 10px !important; }
 
-.boat-marker, .waypoint-marker, .polygon-vertex-marker, .user-location-marker {
+.boat-marker, .waypoint-marker, .polygon-vertex-marker, .user-location-marker, .zone-vertex-marker {
   background: transparent !important;
   border: none !important;
+}
+
+.map-drawing .leaflet-container,
+.map-drawing .leaflet-grab,
+.map-drawing .leaflet-interactive {
+  cursor: crosshair !important;
 }
 
 .leaflet-marker-icon {
