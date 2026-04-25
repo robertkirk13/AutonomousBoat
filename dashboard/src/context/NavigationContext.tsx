@@ -23,6 +23,10 @@ interface NavigationContextType {
   controlMode: ControlMode;
   setControlMode: (mode: ControlMode) => void;
   sendTeleop: (left: number, right: number) => void;
+  leftInverted: boolean;
+  rightInverted: boolean;
+  setLeftInverted: (inverted: boolean) => void;
+  setRightInverted: (inverted: boolean) => void;
   adjustGpsOffset: (deltaLat: number, deltaLng: number) => void;
   clearGpsOffset: () => void;
   calibrateUpright: () => void;
@@ -78,6 +82,42 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
   });
 
   const [controlMode, setControlModeState] = useState<ControlMode>('autonomous');
+  const [leftInverted, setLeftInvertedState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('motor_invert_left') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [rightInverted, setRightInvertedState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('motor_invert_right') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const leftInvertedRef = useRef(leftInverted);
+  const rightInvertedRef = useRef(rightInverted);
+  leftInvertedRef.current = leftInverted;
+  rightInvertedRef.current = rightInverted;
+
+  const setLeftInverted = useCallback((inverted: boolean) => {
+    setLeftInvertedState(inverted);
+    try {
+      localStorage.setItem('motor_invert_left', inverted ? '1' : '0');
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
+
+  const setRightInverted = useCallback((inverted: boolean) => {
+    setRightInvertedState(inverted);
+    try {
+      localStorage.setItem('motor_invert_right', inverted ? '1' : '0');
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
   const [waypointMode, setWaypointMode] = useState<WaypointMode>('manual');
   const [areaCoverage, setAreaCoverage] = useState<AreaCoverageConfig>({
     lineSpacing: 10,
@@ -252,7 +292,9 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
   }, [publish]);
 
   const sendTeleop = useCallback((left: number, right: number) => {
-    publish('boat/motor/set', { left, right });
+    const outLeft = leftInvertedRef.current ? -left : left;
+    const outRight = rightInvertedRef.current ? -right : right;
+    publish('boat/motor/set', { left: outLeft, right: outRight });
   }, [publish]);
 
   const adjustGpsOffset = useCallback((deltaLat: number, deltaLng: number) => {
@@ -465,6 +507,10 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
         controlMode,
         setControlMode,
         sendTeleop,
+        leftInverted,
+        rightInverted,
+        setLeftInverted,
+        setRightInverted,
         adjustGpsOffset,
         clearGpsOffset,
         calibrateUpright,

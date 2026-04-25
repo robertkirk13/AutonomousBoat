@@ -5,16 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=/usr/bin/python3 /home/chuck/AutonomousBoat/scripts/estop_monitor.py wait-release
 ExecStart=/home/chuck/boat-firmware
 WorkingDirectory=/home/chuck
 EnvironmentFile=/home/chuck/.env
-Environment=ESTOP_GPIO=5
-Environment=ESTOP_ACTIVE_STATE=high
-Environment=ESTOP_BIAS=pull-up
-Environment=ESTOP_DEBOUNCE_MS=50
-Environment=ESTOP_POLL_MS=25
-Environment=ESTOP_SERVICE=boat-firmware.service
 Restart=always
 RestartSec=5
 User=root

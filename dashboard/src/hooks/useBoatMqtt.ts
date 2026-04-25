@@ -12,7 +12,7 @@ import type {
 } from '../types/index';
 import { DEFAULT_CAMERA_SETTINGS } from '../types/index';
 
-const HEARTBEAT_TIMEOUT = 20_000;
+const HEARTBEAT_TIMEOUT = 10_000;
 
 const DEFAULT_BOAT_STATE: BoatState = {
   position: { lat: 47.6062, lng: -122.3321 },
@@ -276,7 +276,6 @@ export function useBoatMqtt() {
     client.on('message', (topic: string, payload: Buffer) => {
       try {
         const data = JSON.parse(payload.toString());
-        resetHeartbeat();
 
         switch (topic) {
           case 'boat/imu':
@@ -302,6 +301,7 @@ export function useBoatMqtt() {
               uptimeSecs: data.uptime_secs ?? 0,
               receivedAt: performance.now(),
             };
+            resetHeartbeat();
             break;
           case 'boat/camera':
             setCamera({

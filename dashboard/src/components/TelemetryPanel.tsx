@@ -547,7 +547,17 @@ function MotorControlModal({
   rightTemp: number | null;
   onClose: () => void;
 }) {
-  const { controlMode, setControlMode, sendTeleop, reinitMotors, calibrateMotors } = useNavigation();
+  const {
+    controlMode,
+    setControlMode,
+    sendTeleop,
+    reinitMotors,
+    calibrateMotors,
+    leftInverted,
+    rightInverted,
+    setLeftInverted,
+    setRightInverted,
+  } = useNavigation();
   const [leftCmd, setLeftCmd] = useState(0);
   const [rightCmd, setRightCmd] = useState(0);
   const [linked, setLinked] = useState(false);
@@ -816,6 +826,30 @@ function MotorControlModal({
               title="Link both sliders so they move together"
             >
               {linked ? 'Linked' : 'Link'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLeftInverted(!leftInverted)}
+              className={`px-2.5 py-1.5 text-[10px] font-mono rounded border transition-colors ${
+                leftInverted
+                  ? 'bg-amber-400/15 border-amber-400/30 text-amber-300'
+                  : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:text-white/80'
+              }`}
+              title="Flip port motor direction (swap forward/reverse)"
+            >
+              {leftInverted ? 'Port ⇄' : 'Port →'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setRightInverted(!rightInverted)}
+              className={`px-2.5 py-1.5 text-[10px] font-mono rounded border transition-colors ${
+                rightInverted
+                  ? 'bg-amber-400/15 border-amber-400/30 text-amber-300'
+                  : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:text-white/80'
+              }`}
+              title="Flip starboard motor direction (swap forward/reverse)"
+            >
+              {rightInverted ? 'Stbd ⇄' : 'Stbd →'}
             </button>
             <button
               type="button"
