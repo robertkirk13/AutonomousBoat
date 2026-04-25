@@ -7,10 +7,22 @@ use crate::config::{
     MOTOR_OUTPUT_INTERVAL, TELEOP_COMMAND_TIMEOUT,
 };
 use crate::tasks::can::CanTxRequest;
-use crate::types::{CanState, MotorCommand};
+use crate::types::{CanState, MotorCommand, MotorConfig};
 use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
+
+/// Apply per-motor trim (scale) and invert (sign flip) to a raw command. Used
+/// only on the resolved nav/teleop output — ESC arming/calibration writes
+/// raw values directly so the endpoints aren't shifted.
+fn apply_motor_config(cmd: &MotorCommand, config: &MotorConfig) -> MotorCommand {
+    let left_sign = if config.left_invert { -1.0 } else { 1.0 };
+    let right_sign = if config.right_invert { -1.0 } else { 1.0 };
+    MotorCommand {
+        left: cmd.left * config.left_trim * left_sign,
+        right: cmd.right * config.right_trim * right_sign,
+    }
+}
 
 #[cfg(feature = "hw")]
 use crate::config::{
@@ -116,6 +128,7 @@ impl PwmEscOutputs {
 pub async fn run(
     motor_rx: watch::Receiver<MotorCommand>,
     teleop_rx: watch::Receiver<MotorCommand>,
+    motor_config_rx: watch::Receiver<MotorConfig>,
     can_state_rx: watch::Receiver<CanState>,
     can_tx: mpsc::Sender<CanTxRequest>,
     motor_reinit_rx: watch::Receiver<u64>,
@@ -369,13 +382,14 @@ pub async fn run(
             teleop_timeout_reported = true;
         }
 
-        let cmd = resolve_command(
+        let raw_cmd = resolve_command(
             &autopilot_cmd,
             autopilot_updated_at,
             &teleop_cmd,
             teleop_updated_at,
             now,
         );
+        let cmd = apply_motor_config(&raw_cmd, &motor_config_rx.borrow());
 
         #[cfg(feature = "hw")]
         {
@@ -484,5 +498,26 @@ mod tests {
         assert_eq!(thrust_to_pulse_width_us(0.0), 1_500);
         assert_eq!(thrust_to_pulse_width_us(0.5), 1_750);
         assert_eq!(thrust_to_pulse_width_us(1.0), 2_000);
+    }
+
+    #[test]
+    fn motor_config_default_is_identity() {
+        let raw = MotorCommand { left: 0.7, right: -0.3 };
+        let out = apply_motor_config(&raw, &MotorConfig::default());
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn motor_config_inverts_and_trims() {
+        let raw = MotorCommand { left: 0.6, right: 0.8 };
+        let cfg = MotorConfig {
+            left_invert: true,
+            right_invert: false,
+            left_trim: 1.0,
+            right_trim: 0.5,
+        };
+        let out = apply_motor_config(&raw, &cfg);
+        assert!((out.left - (-0.6)).abs() < 1e-9);
+        assert!((out.right - 0.4).abs() < 1e-9);
     }
 }

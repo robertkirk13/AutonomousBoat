@@ -81,10 +81,29 @@ pub struct GpsPosition {
     pub timestamp: Option<Instant>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct GpsOffset {
     pub lat: f64,
     pub lon: f64,
+}
+
+/// Quaternion stored as (w, x, y, z). Uses primitive arrays for serde so the
+/// on-disk and on-wire representation is unambiguous.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Quat {
+    pub w: f64,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+/// IMU calibration applied at the source: the firmware multiplies the raw
+/// quaternion by `upright_quat_inv` and subtracts `compass_offset_deg` from
+/// the raw heading before publishing. Persisted on disk.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ImuCalibration {
+    pub upright_quat_inv: Option<Quat>,
+    pub compass_offset_deg: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -136,6 +155,58 @@ impl Default for NavState {
 pub struct MotorCommand {
     pub left: f64,
     pub right: f64,
+}
+
+/// Per-motor calibration applied at the final PWM/CAN output stage. Trim
+/// scales raw thrust (0.5..1.0); invert flips sign so a forward command
+/// physically drives the motor in reverse. Defaults are no-op.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct MotorConfig {
+    pub left_invert: bool,
+    pub right_invert: bool,
+    pub left_trim: f64,
+    pub right_trim: f64,
+}
+
+impl Default for MotorConfig {
+    fn default() -> Self {
+        Self {
+            left_invert: false,
+            right_invert: false,
+            left_trim: 1.0,
+            right_trim: 1.0,
+        }
+    }
+}
+
+/// Tunable autopilot parameters. Defaults match the original hardcoded
+/// constants from nav.rs; the dashboard publishes retained updates over MQTT
+/// to override these without reflashing.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct NavParams {
+    pub cruise_thrust: f64,
+    pub approach_thrust: f64,
+    pub hard_turn_thrust: f64,
+    pub straight_error_deg: f64,
+    pub hard_turn_error_deg: f64,
+    pub min_inner_thrust: f64,
+    pub max_slew_per_tick: f64,
+    pub close_approach_m: f64,
+}
+
+impl Default for NavParams {
+    fn default() -> Self {
+        Self {
+            cruise_thrust: 0.55,
+            approach_thrust: 0.32,
+            hard_turn_thrust: 0.32,
+            straight_error_deg: 10.0,
+            hard_turn_error_deg: 60.0,
+            min_inner_thrust: 0.10,
+            max_slew_per_tick: 0.12,
+            close_approach_m: 8.0,
+        }
+    }
 }
 
 // --- CAN bus ---

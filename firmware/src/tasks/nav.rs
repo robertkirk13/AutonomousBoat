@@ -9,17 +9,6 @@ use tokio_util::sync::CancellationToken;
 /// Meters per degree of latitude.
 const M_PER_DEG_LAT: f64 = 111_320.0;
 
-/// Keep the controller deliberately simple: cruise straight, reduce the inner motor
-/// when the heading error grows, and stop the inner motor entirely for hard turns.
-const CLOSE_APPROACH_M: f64 = 8.0;
-const STRAIGHT_ERROR_DEG: f64 = 10.0;
-const HARD_TURN_ERROR_DEG: f64 = 60.0;
-const CRUISE_THRUST: f64 = 0.55;
-const APPROACH_THRUST: f64 = 0.32;
-const HARD_TURN_THRUST: f64 = 0.32;
-const MIN_INNER_THRUST: f64 = 0.10;
-const MAX_SLEW_PER_TICK: f64 = 0.12;
-
 /// Haversine-like flat-earth distance (good enough at small scales).
 fn distance_m(a_lat: f64, a_lon: f64, b_lat: f64, b_lon: f64) -> f64 {
     let dy = (b_lat - a_lat) * M_PER_DEG_LAT;
@@ -65,28 +54,28 @@ fn heading_is_valid(imu: Option<&ImuData>, now: Instant) -> bool {
         .unwrap_or(false)
 }
 
-fn cruise_thrust(distance_m: f64) -> f64 {
-    if distance_m < CLOSE_APPROACH_M {
-        APPROACH_THRUST
+fn cruise_thrust(distance_m: f64, params: &NavParams) -> f64 {
+    if distance_m < params.close_approach_m {
+        params.approach_thrust
     } else {
-        CRUISE_THRUST
+        params.cruise_thrust
     }
 }
 
-fn compute_target_thrust(error_deg: f64, distance_m: f64) -> MotorCommand {
+fn compute_target_thrust(error_deg: f64, distance_m: f64, params: &NavParams) -> MotorCommand {
     let abs_error = error_deg.abs();
-    let outer = cruise_thrust(distance_m);
+    let outer = cruise_thrust(distance_m, params);
 
-    if abs_error <= STRAIGHT_ERROR_DEG {
+    if abs_error <= params.straight_error_deg {
         return MotorCommand {
             left: outer,
             right: outer,
         };
     }
 
-    if abs_error >= HARD_TURN_ERROR_DEG {
+    if abs_error >= params.hard_turn_error_deg {
         let turn = MotorCommand {
-            left: HARD_TURN_THRUST,
+            left: params.hard_turn_thrust,
             right: 0.0,
         };
         return if error_deg.is_sign_positive() {
@@ -99,8 +88,9 @@ fn compute_target_thrust(error_deg: f64, distance_m: f64) -> MotorCommand {
         };
     }
 
-    let turn_ratio = (abs_error - STRAIGHT_ERROR_DEG) / (HARD_TURN_ERROR_DEG - STRAIGHT_ERROR_DEG);
-    let inner = (outer * (1.0 - turn_ratio)).max(MIN_INNER_THRUST);
+    let turn_ratio = (abs_error - params.straight_error_deg)
+        / (params.hard_turn_error_deg - params.straight_error_deg);
+    let inner = (outer * (1.0 - turn_ratio)).max(params.min_inner_thrust);
     if error_deg.is_sign_positive() {
         MotorCommand {
             left: outer,
@@ -114,8 +104,8 @@ fn compute_target_thrust(error_deg: f64, distance_m: f64) -> MotorCommand {
     }
 }
 
-fn slew_limit(previous: f64, target: f64) -> f64 {
-    previous + (target - previous).clamp(-MAX_SLEW_PER_TICK, MAX_SLEW_PER_TICK)
+fn slew_limit(previous: f64, target: f64, max_slew: f64) -> f64 {
+    previous + (target - previous).clamp(-max_slew, max_slew)
 }
 
 fn build_nav_state(
@@ -141,6 +131,7 @@ pub async fn run(
     gps_rx: watch::Receiver<GpsPosition>,
     imu_rx: watch::Receiver<Option<ImuData>>,
     mission_rx: watch::Receiver<Mission>,
+    nav_params_rx: watch::Receiver<NavParams>,
     nav_tx: watch::Sender<NavState>,
     motor_tx: watch::Sender<MotorCommand>,
     cancel: CancellationToken,
@@ -260,11 +251,12 @@ pub async fn run(
             continue;
         }
 
+        let params = nav_params_rx.borrow().clone();
         let error = angle_diff(heading, target_bearing);
-        let target_cmd = compute_target_thrust(error, distance);
+        let target_cmd = compute_target_thrust(error, distance, &params);
         let cmd = MotorCommand {
-            left: slew_limit(previous_cmd.left, target_cmd.left),
-            right: slew_limit(previous_cmd.right, target_cmd.right),
+            left: slew_limit(previous_cmd.left, target_cmd.left, params.max_slew_per_tick),
+            right: slew_limit(previous_cmd.right, target_cmd.right, params.max_slew_per_tick),
         };
         previous_cmd = cmd.clone();
 
@@ -331,34 +323,37 @@ mod tests {
 
     #[test]
     fn small_heading_error_cruises_straight() {
-        let cmd = compute_target_thrust(4.0, 20.0);
+        let params = NavParams::default();
+        let cmd = compute_target_thrust(4.0, 20.0, &params);
 
         assert_eq!(
             cmd,
             MotorCommand {
-                left: CRUISE_THRUST,
-                right: CRUISE_THRUST,
+                left: params.cruise_thrust,
+                right: params.cruise_thrust,
             }
         );
     }
 
     #[test]
     fn moderate_right_turn_keeps_outer_motor_faster() {
-        let cmd = compute_target_thrust(30.0, 20.0);
+        let params = NavParams::default();
+        let cmd = compute_target_thrust(30.0, 20.0, &params);
 
         assert!(cmd.left > cmd.right);
-        assert!(cmd.right >= MIN_INNER_THRUST);
+        assert!(cmd.right >= params.min_inner_thrust);
     }
 
     #[test]
     fn hard_left_turn_stops_inner_motor() {
-        let cmd = compute_target_thrust(-80.0, 20.0);
+        let params = NavParams::default();
+        let cmd = compute_target_thrust(-80.0, 20.0, &params);
 
         assert_eq!(
             cmd,
             MotorCommand {
                 left: 0.0,
-                right: HARD_TURN_THRUST,
+                right: params.hard_turn_thrust,
             }
         );
     }

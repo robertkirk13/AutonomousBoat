@@ -67,6 +67,11 @@ pub const CAMERA_ENV_FILE: &str = "/etc/default/camera-stream";
 pub const TOPIC_MISSION_SET: &str = "boat/mission/set";
 pub const TOPIC_MOTOR_SET: &str = "boat/motor/set";
 pub const TOPIC_COMMAND: &str = "boat/command";
+// Retained config topics — dashboard publishes with retain=true so the
+// firmware automatically picks up the latest values on every reconnect/reboot
+// without needing local file persistence.
+pub const TOPIC_MOTOR_CONFIG: &str = "boat/motor/config";
+pub const TOPIC_NAV_PARAMS: &str = "boat/control/params";
 
 // Navigation
 pub const NAV_INTERVAL: Duration = Duration::from_millis(200); // 5Hz

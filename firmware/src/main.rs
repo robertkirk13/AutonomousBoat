@@ -4,6 +4,7 @@ mod bus_sim;
 mod config;
 mod drivers;
 mod mqtt;
+mod persist;
 #[cfg(feature = "sim")]
 mod sim_world;
 mod tasks;
@@ -40,6 +41,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cancel = CancellationToken::new();
 
+    // --- Persisted state (motor cal, nav params, GPS offset, IMU cal) ---
+    let state_path = persist::state_path();
+    let persisted = persist::load(&state_path);
+
     // --- Sim world (sim mode only) ---
     #[cfg(feature = "sim")]
     let world = sim_world::SimWorld::new();
@@ -60,10 +65,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Watch channels for sensor state ---
     let (imu_tx, imu_rx) = watch::channel(None::<ImuData>);
+    let (raw_imu_tx, raw_imu_rx) = watch::channel(None::<ImuData>);
     let (power_tx, power_rx) = watch::channel(PowerState::default());
     let (thermal_tx, thermal_rx) = watch::channel(ThermalState::default());
     let (gps_tx, gps_rx) = watch::channel(GpsPosition::default());
-    let (gps_offset_tx, gps_offset_rx) = watch::channel(GpsOffset::default());
+    let (gps_offset_tx, gps_offset_rx) = watch::channel(persisted.gps_offset.clone());
     let (nav_tx, nav_rx) = watch::channel(NavState::default());
     let (mission_tx, mission_rx) = watch::channel(Mission::default());
     let (motor_tx, motor_rx) = watch::channel(MotorCommand::default());
@@ -78,6 +84,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Motor throttle endpoint calibration signal: same pattern, runs the
     // max/min/neutral teach sequence when bumped. Props MUST be off.
     let (motor_cal_tx, motor_cal_rx) = watch::channel(0u64);
+    // Motor trim/invert, nav params, and IMU calibration: seeded from the
+    // on-disk persisted state so they survive firmware reboots.
+    let (motor_config_tx, motor_config_rx) = watch::channel(persisted.motor_config.clone());
+    let (nav_params_tx, nav_params_rx) = watch::channel(persisted.nav_params.clone());
+    let (imu_cal_tx, imu_cal_rx) = watch::channel(persisted.imu_calibration.clone());
 
     // CAN TX request channel (other tasks can send CAN frames)
     let (can_tx, can_tx_rx) = mpsc::channel::<tasks::can::CanTxRequest>(32);
@@ -103,8 +114,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(not(feature = "hw"))]
     let fan: Option<tasks::thermal::FanControl> = None;
 
+    // --- Persist task: writes calibration/tuning state to disk on change ---
+    let persist_handle = tokio::spawn(persist::run(
+        state_path.clone(),
+        motor_config_rx.clone(),
+        nav_params_rx.clone(),
+        gps_offset_rx.clone(),
+        imu_cal_rx.clone(),
+        cancel.clone(),
+    ));
+
     // --- Spawn sensor tasks ---
-    let imu_handle = tokio::spawn(tasks::imu::run(i2c_bus.clone(), imu_tx, cancel.clone()));
+    let imu_handle = tokio::spawn(tasks::imu::run(
+        i2c_bus.clone(),
+        imu_tx,
+        imu_cal_rx.clone(),
+        raw_imu_tx,
+        cancel.clone(),
+    ));
 
     let power_handle = tokio::spawn(tasks::power::run(i2c_bus.clone(), power_tx, cancel.clone()));
 
@@ -151,6 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         gps_rx.clone(),
         imu_rx.clone(),
         mission_rx,
+        nav_params_rx.clone(),
         nav_tx,
         motor_tx,
         cancel.clone(),
@@ -161,6 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let motor_handle = tokio::spawn(tasks::motor::run(
         motor_rx,
         teleop_rx,
+        motor_config_rx.clone(),
         can_state_rx,
         can_tx.clone(),
         motor_reinit_rx.clone(),
@@ -226,6 +255,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 camera_tx,
                 motor_reinit_tx,
                 motor_cal_tx,
+                motor_config_tx,
+                nav_params_tx,
+                imu_cal_tx,
+                raw_imu_rx,
                 cancel.clone(),
             )))
         }
@@ -240,6 +273,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = can_state_rx;
         let _ = motor_reinit_rx;
         let _ = motor_cal_rx;
+        let _ = motor_config_rx;
         drop(can_tx);
     }
 
@@ -251,6 +285,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Join all tasks with timeout ---
     let _ = tokio::time::timeout(Duration::from_secs(5), async {
         let _ = imu_handle.await;
+        let _ = persist_handle.await;
         let _ = power_handle.await;
         let _ = thermal_handle.await;
         let _ = display_handle.await;

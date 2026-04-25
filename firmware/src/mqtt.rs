@@ -18,6 +18,7 @@ struct StatusMessage {
 #[serde(tag = "action", rename_all = "snake_case")]
 enum CommandMessage {
     Reboot,
+    Shutdown,
     GpsAdjustOffset {
         delta_lat: f64,
         delta_lon: f64,
@@ -31,6 +32,13 @@ enum CommandMessage {
     },
     MotorReinit,
     MotorCalibrate,
+    /// Snapshot the current raw IMU quaternion and store its inverse so
+    /// future readings are zeroed at this orientation.
+    CalibrateUpright,
+    /// Snapshot the current raw heading as the new compass offset (north).
+    CalibrateCompass,
+    /// Drop both IMU calibrations.
+    ClearImuCalibration,
 }
 
 pub struct MqttConfig {
@@ -68,6 +76,10 @@ pub async fn run(
     camera_tx: watch::Sender<CameraSettings>,
     motor_reinit_tx: watch::Sender<u64>,
     motor_cal_tx: watch::Sender<u64>,
+    motor_config_tx: watch::Sender<MotorConfig>,
+    nav_params_tx: watch::Sender<NavParams>,
+    imu_cal_tx: watch::Sender<ImuCalibration>,
+    raw_imu_rx: watch::Receiver<Option<ImuData>>,
     cancel: CancellationToken,
 ) {
     let mut opts = MqttOptions::new("boat-firmware", &config.host, config.port);
@@ -99,6 +111,10 @@ pub async fn run(
     let camera_tx_clone = camera_tx.clone();
     let motor_reinit_tx_clone = motor_reinit_tx.clone();
     let motor_cal_tx_clone = motor_cal_tx.clone();
+    let motor_config_tx_clone = motor_config_tx.clone();
+    let nav_params_tx_clone = nav_params_tx.clone();
+    let imu_cal_tx_clone = imu_cal_tx.clone();
+    let raw_imu_rx_clone = raw_imu_rx.clone();
     let client_sub = client.clone();
     let eventloop_handle = tokio::spawn(async move {
         let mut subscribed = false;
@@ -112,8 +128,10 @@ pub async fn run(
                                 let _ = client_sub.subscribe(TOPIC_MISSION_SET, QoS::AtLeastOnce).await;
                                 let _ = client_sub.subscribe(TOPIC_MOTOR_SET, QoS::AtMostOnce).await;
                                 let _ = client_sub.subscribe(TOPIC_COMMAND, QoS::AtLeastOnce).await;
+                                let _ = client_sub.subscribe(TOPIC_MOTOR_CONFIG, QoS::AtLeastOnce).await;
+                                let _ = client_sub.subscribe(TOPIC_NAV_PARAMS, QoS::AtLeastOnce).await;
                                 subscribed = true;
-                                tracing::info!("Subscribed to {TOPIC_MISSION_SET}, {TOPIC_MOTOR_SET}, {TOPIC_COMMAND}");
+                                tracing::info!("Subscribed to mission/motor/command/config topics");
                             }
                         }
                         Ok(Event::Incoming(Packet::Publish(publish))) => {
@@ -136,11 +154,44 @@ pub async fn run(
                                         tracing::warn!("Failed to parse motor command: {e}");
                                     }
                                 }
+                            } else if publish.topic == TOPIC_MOTOR_CONFIG {
+                                match serde_json::from_slice::<MotorConfig>(&publish.payload) {
+                                    Ok(cfg) => {
+                                        tracing::info!(
+                                            "Motor config: invert L/R={}/{}, trim L/R={:.2}/{:.2}",
+                                            cfg.left_invert,
+                                            cfg.right_invert,
+                                            cfg.left_trim,
+                                            cfg.right_trim,
+                                        );
+                                        let _ = motor_config_tx_clone.send(cfg);
+                                    }
+                                    Err(e) => tracing::warn!("Failed to parse motor config: {e}"),
+                                }
+                            } else if publish.topic == TOPIC_NAV_PARAMS {
+                                match serde_json::from_slice::<NavParams>(&publish.payload) {
+                                    Ok(params) => {
+                                        tracing::info!(
+                                            "Nav params: cruise={:.2}, approach={:.2}, hard={:.2}, str_err={:.0}, hard_err={:.0}",
+                                            params.cruise_thrust,
+                                            params.approach_thrust,
+                                            params.hard_turn_thrust,
+                                            params.straight_error_deg,
+                                            params.hard_turn_error_deg,
+                                        );
+                                        let _ = nav_params_tx_clone.send(params);
+                                    }
+                                    Err(e) => tracing::warn!("Failed to parse nav params: {e}"),
+                                }
                             } else if publish.topic == TOPIC_COMMAND {
                                 match serde_json::from_slice::<CommandMessage>(&publish.payload) {
                                     Ok(CommandMessage::Reboot) => {
                                         tracing::warn!("Reboot command received via MQTT — rebooting");
                                         let _ = std::process::Command::new("sudo").args(["reboot"]).spawn();
+                                    }
+                                    Ok(CommandMessage::Shutdown) => {
+                                        tracing::warn!("Shutdown command received via MQTT — powering off");
+                                        let _ = std::process::Command::new("sudo").args(["poweroff"]).spawn();
                                     }
                                     Ok(CommandMessage::GpsAdjustOffset { delta_lat, delta_lon }) => {
                                         if !delta_lat.is_finite() || !delta_lon.is_finite() {
@@ -187,6 +238,42 @@ pub async fn run(
                                         let next = motor_cal_tx_clone.borrow().wrapping_add(1);
                                         let _ = motor_cal_tx_clone.send(next);
                                         tracing::warn!("Motor endpoint calibration requested via MQTT (seq {next}) — props MUST be off");
+                                    }
+                                    Ok(CommandMessage::CalibrateUpright) => {
+                                        let raw = raw_imu_rx_clone.borrow().clone();
+                                        match raw {
+                                            Some(imu) => {
+                                                // Store the inverse so future quat * inv zeros at this pose.
+                                                let inv = Quat {
+                                                    w: imu.qw,
+                                                    x: -imu.qx,
+                                                    y: -imu.qy,
+                                                    z: -imu.qz,
+                                                };
+                                                let mut cal = imu_cal_tx_clone.borrow().clone();
+                                                cal.upright_quat_inv = Some(inv);
+                                                let _ = imu_cal_tx_clone.send(cal);
+                                                tracing::info!("Upright calibrated at q=({:.3}, {:.3}, {:.3}, {:.3})",
+                                                    imu.qw, imu.qx, imu.qy, imu.qz);
+                                            }
+                                            None => tracing::warn!("Calibrate upright: no IMU reading available yet"),
+                                        }
+                                    }
+                                    Ok(CommandMessage::CalibrateCompass) => {
+                                        let raw = raw_imu_rx_clone.borrow().clone();
+                                        match raw {
+                                            Some(imu) => {
+                                                let mut cal = imu_cal_tx_clone.borrow().clone();
+                                                cal.compass_offset_deg = imu.heading;
+                                                let _ = imu_cal_tx_clone.send(cal);
+                                                tracing::info!("Compass calibrated: heading {:.1}° is now north", imu.heading);
+                                            }
+                                            None => tracing::warn!("Calibrate compass: no IMU reading available yet"),
+                                        }
+                                    }
+                                    Ok(CommandMessage::ClearImuCalibration) => {
+                                        let _ = imu_cal_tx_clone.send(ImuCalibration::default());
+                                        tracing::info!("Cleared IMU calibration");
                                     }
                                     Err(e) => {
                                         tracing::warn!("Failed to parse command: {e}");
