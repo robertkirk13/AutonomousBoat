@@ -1,0 +1,24 @@
+[Unit]
+Description=Cloudflare Tunnel (boat camera + diagnostics)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+# The tunnel is provisioned with `cloudflared tunnel create` on first
+# install; the resulting credentials JSON lives at
+# /etc/cloudflared/<tunnel-id>.json and is referenced by config.yml.
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate tunnel --config /etc/cloudflared/config.yml run
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=0
+# cloudflared writes a small amount of state to its config dir; lock
+# everything else down.
+ProtectSystem=strict
+ReadWritePaths=/etc/cloudflared
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,30 @@
+# Cloudflare Tunnel config for the boat.
+#
+# Copy this file to /etc/cloudflared/config.yml and replace the
+# placeholders. Get the tunnel UUID + credentials JSON by running:
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create boat
+#
+# Then set up DNS records pointing the hostnames at the tunnel:
+#
+#   cloudflared tunnel route dns boat cam.<your-domain>
+#
+# Recommended: enable Cloudflare Access on the camera hostname
+# (Zero Trust dashboard -> Access -> Applications) so it's not a
+# public webcam.
+
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: /etc/cloudflared/REPLACE_WITH_TUNNEL_UUID.json
+
+# Buffer outbound HLS chunks aggressively — small segments + fast
+# turnover benefit from minimal proxy buffering.
+originRequest:
+  connectTimeout: 10s
+  noTLSVerify: true
+  http2Origin: false
+
+ingress:
+  - hostname: cam.REPLACE_WITH_DOMAIN
+    service: http://localhost:8554
+  - service: http_status:404

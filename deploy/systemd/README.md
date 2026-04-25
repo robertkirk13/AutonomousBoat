@@ -7,7 +7,8 @@ Systemd unit templates for services that run on the Pi.
 - `boat-firmware.service` - launches the Rust firmware binary from the user's home directory
 - `boat-estop.service` - watches a GPIO-backed maintained e-stop and stops/starts `boat-firmware`
 - `ssd1306-dashboard.service` - runs the Python OLED dashboard and shutdown helper
-- `camera-stream.service` - optional MJPEG camera stream service
+- `camera-stream.service` - optional HLS camera stream service (H.264 via ffmpeg)
+- `cloudflared.service` - optional Cloudflare Tunnel for exposing the camera stream over cellular
 
 ## Install
 
