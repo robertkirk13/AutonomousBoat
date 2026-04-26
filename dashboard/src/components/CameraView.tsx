@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Hls from 'hls.js';
 import { useNavigation } from '../context/NavigationContext';
@@ -15,8 +15,9 @@ interface CameraViewProps {
 }
 
 export default function CameraView({ onLiveChange }: CameraViewProps = {}) {
-  const { camera, setCameraSettings } = useNavigation();
+  const { boat, camera, setCameraSettings } = useNavigation();
   const [error, setError] = useState(false);
+  const [streamReady, setStreamReady] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Cache-buster so restarting the service on resolution change forces the
@@ -24,18 +25,40 @@ export default function CameraView({ onLiveChange }: CameraViewProps = {}) {
   const [streamKey, setStreamKey] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const isLive = camera.enabled && !error;
+  const isLive = boat.boatOnline && camera.enabled && streamReady && !error;
 
   useEffect(() => {
     onLiveChange?.(isLive);
   }, [isLive, onLiveChange]);
 
+  useLayoutEffect(() => {
+    if (!boat.boatOnline || !camera.enabled) {
+      // Reset before paint so the parent never briefly shows stale video.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setStreamReady(false);
+      setError(false);
+    }
+    if (!boat.boatOnline) {
+      setExpanded(false);
+      setSettingsOpen(false);
+    }
+  }, [boat.boatOnline, camera.enabled]);
+
   useEffect(() => {
-    if (!camera.enabled) return;
-    if (!isLive) return;
+    if (!boat.boatOnline || !camera.enabled) return;
     const video = videoRef.current;
     if (!video) return;
-    setError(false);
+
+    const markReady = () => setStreamReady(true);
+    const markError = () => {
+      setStreamReady(false);
+      setError(true);
+    };
+
+    video.addEventListener('loadeddata', markReady);
+    video.addEventListener('canplay', markReady);
+    video.addEventListener('playing', markReady);
+    video.addEventListener('error', markError);
 
     let hls: Hls | null = null;
     if (Hls.isSupported()) {
@@ -53,35 +76,40 @@ export default function CameraView({ onLiveChange }: CameraViewProps = {}) {
       hls.loadSource(HLS_URL);
       hls.attachMedia(video);
       hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) setError(true);
+        if (data.fatal) markError();
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari (incl. iOS) plays HLS natively without hls.js.
       video.src = HLS_URL;
-      video.onerror = () => setError(true);
     } else {
-      setError(true);
+      markError();
     }
 
     return () => {
       if (hls) hls.destroy();
+      video.removeEventListener('loadeddata', markReady);
+      video.removeEventListener('canplay', markReady);
+      video.removeEventListener('playing', markReady);
+      video.removeEventListener('error', markError);
     };
-  }, [camera.enabled, streamKey, isLive]);
+  }, [boat.boatOnline, camera.enabled, streamKey]);
 
   // Auto-retry after a fatal error so the stream recovers when the boat is
   // reachable again — without this the box stays hidden until the user toggles.
   useEffect(() => {
-    if (!camera.enabled || !error) return;
+    if (!boat.boatOnline || !camera.enabled || !error) return;
     const t = setInterval(() => {
+      setStreamReady(false);
       setError(false);
       setStreamKey(k => k + 1);
     }, 8000);
     return () => clearInterval(t);
-  }, [camera.enabled, error]);
+  }, [boat.boatOnline, camera.enabled, error]);
 
   const toggleEnabled = () => {
     setCameraSettings({ ...camera, enabled: !camera.enabled });
     setStreamKey(k => k + 1);
+    setStreamReady(false);
     setError(false);
   };
 
@@ -89,6 +117,7 @@ export default function CameraView({ onLiveChange }: CameraViewProps = {}) {
     if (width === camera.width && height === camera.height) return;
     setCameraSettings({ ...camera, width, height });
     setStreamKey(k => k + 1);
+    setStreamReady(false);
     setError(false);
   };
 
@@ -96,6 +125,7 @@ export default function CameraView({ onLiveChange }: CameraViewProps = {}) {
     if (fps === camera.fps) return;
     setCameraSettings({ ...camera, fps });
     setStreamKey(k => k + 1);
+    setStreamReady(false);
     setError(false);
   };
 
@@ -205,7 +235,7 @@ export default function CameraView({ onLiveChange }: CameraViewProps = {}) {
       )}
 
       <div className="w-full h-full rounded-2xl overflow-hidden bg-black/60 border border-white/10">
-        {camera.enabled && !error ? (
+        {boat.boatOnline && camera.enabled && !error ? (
           <video
             key={streamKey}
             ref={videoRef}
@@ -220,10 +250,11 @@ export default function CameraView({ onLiveChange }: CameraViewProps = {}) {
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
             </svg>
             <span className="text-[10px] font-mono">{camera.enabled ? 'Camera offline' : 'Camera disabled'}</span>
-            {camera.enabled && (
+            {boat.boatOnline && camera.enabled && (
               <button
                 type="button"
                 onClick={() => {
+                  setStreamReady(false);
                   setError(false);
                   setStreamKey(k => k + 1);
                 }}

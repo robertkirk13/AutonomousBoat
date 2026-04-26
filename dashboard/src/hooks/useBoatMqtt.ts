@@ -28,9 +28,9 @@ const MQTT_DISCONNECT_GRACE = 3_000;
 // Topic the dashboard publishes to (and subscribes to via boat/#) to measure
 // broker round-trip latency. The boat firmware ignores this prefix.
 const PING_TOPIC = 'boat/dashboard/ping';
-// Topics that prove the boat is alive. Receiving any of these resets the
-// heartbeat timer. Excludes PING_TOPIC (broker echo only) and command topics
-// the dashboard publishes itself.
+// Fresh, non-retained topics that prove the boat is alive. Receiving any of
+// these resets the heartbeat timer. Excludes PING_TOPIC (broker echo only),
+// retained settings/snapshots, and command topics the dashboard publishes.
 const BOAT_TOPICS = new Set([
   'boat/imu',
   'boat/gps',
@@ -38,14 +38,12 @@ const BOAT_TOPICS = new Set([
   'boat/thermal',
   'boat/nav',
   'boat/payload',
-  'boat/network',
   'boat/status',
-  'boat/camera',
   'boat/can',
 ]);
 
 const DEFAULT_BOAT_STATE: BoatState = {
-  position: { lat: 47.6062, lng: -122.3321 },
+  position: { lat: 30.2672, lng: -97.7431 },
   heading: 0,
   roll: 0,
   pitch: 0,

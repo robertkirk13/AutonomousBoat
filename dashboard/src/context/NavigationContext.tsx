@@ -94,7 +94,7 @@ export function useNavigation() {
   return context;
 }
 
-const DEFAULT_LAKE_CENTER = { lat: 47.6062, lng: -122.3321 };
+const DEFAULT_LAKE_CENTER = { lat: 30.2672, lng: -97.7431 };
 
 const STORAGE_KEYS = {
   waypoints: 'castaway:waypoints',

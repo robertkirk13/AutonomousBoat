@@ -10,6 +10,14 @@ export default function ErrorBanner() {
 
   const alerts: Alert[] = [];
 
+  if (!boat.boatOnline) {
+    alerts.push({
+      id: 'boat',
+      level: 'error',
+      title: 'No boat online',
+    });
+  }
+
   // Broker-disconnected alert removed: it false-positived too often during
   // normal mqtt.js reconnects. Surface only the GPS-fix issue, and only once
   // the boat is otherwise alive (pre-fix while booting is normal).

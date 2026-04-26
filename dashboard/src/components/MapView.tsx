@@ -7,8 +7,10 @@ type ReactLeafletModule = typeof import('react-leaflet');
 
 const GPS_CALIBRATION_SAMPLES = 5;
 const GPS_CALIBRATION_INTERVAL_MS = 1000;
+const AUSTIN_TX = { lat: 30.2672, lng: -97.7431 };
 
 type GpsCalibrationPhase = 'idle' | 'sampling' | 'done' | 'error';
+type MapMode = 'map' | 'satellite' | 'bathymetry';
 
 export default function MapView() {
   const { boat, mission, addWaypoint } = useNavigation();
@@ -110,7 +112,7 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
     return liveTrail.map((p) => [p.lat, p.lon] as [number, number]);
   }, [replayMode, liveTrail, replayTrail, replayCursor]);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [mapMode, setMapMode] = useState<'map' | 'satellite'>('map');
+  const [mapMode, setMapMode] = useState<MapMode>('map');
   const [gpsCalibration, setGpsCalibration] = useState<{
     phase: GpsCalibrationPhase;
     samples: number;
@@ -172,13 +174,21 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
     }
   }, [mapCenter]);
 
-  // Snap to the boat whenever it transitions from offline to online.
+  const fallbackCenter = useCallback(() => {
+    const center = userLocation ?? AUSTIN_TX;
+    setMapCenter(center.lat, center.lng);
+  }, [setMapCenter, userLocation]);
+
+  // Snap to the boat whenever it transitions from offline to online; snap back
+  // to the user's location (or Austin) when the boat drops offline.
   useEffect(() => {
     if (boat.boatOnline && !prevBoatOnlineRef.current) {
       setMapCenter(boatPositionRef.current.lat, boatPositionRef.current.lng);
+    } else if (!boat.boatOnline && prevBoatOnlineRef.current) {
+      fallbackCenter();
     }
     prevBoatOnlineRef.current = boat.boatOnline;
-  }, [boat.boatOnline, setMapCenter]);
+  }, [boat.boatOnline, fallbackCenter, setMapCenter]);
 
   // Snap to the user's location the first time we get it, if no boat is online.
   useEffect(() => {
@@ -387,7 +397,7 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
 
   const waypointPath = mission.waypoints.map((wp) => [wp.lat, wp.lng] as [number, number]);
 
-  const fullPath = mission.status === 'running' && mission.currentWaypointIndex >= 0
+  const fullPath = boat.boatOnline && mission.status === 'running' && mission.currentWaypointIndex >= 0
     ? [[boat.position.lat, boat.position.lng] as [number, number], ...waypointPath.slice(mission.currentWaypointIndex)]
     : waypointPath;
 
@@ -409,12 +419,20 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
             maxNativeZoom={20}
             maxZoom={20}
           />
-        ) : (
+        ) : mapMode === 'satellite' ? (
           <TileLayer
             key="satellite"
             attribution='&copy; <a href="https://www.esri.com/" target="_blank">Esri</a>'
             url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
             maxNativeZoom={19}
+            maxZoom={20}
+          />
+        ) : (
+          <TileLayer
+            key="bathymetry"
+            attribution='Sources: Esri, GEBCO, NOAA NGDC, Garmin, and other contributors'
+            url="https://services.arcgisonline.com/arcgis/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}"
+            maxNativeZoom={13}
             maxZoom={20}
           />
         )}
@@ -435,7 +453,7 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
           />
         )}
 
-        {mission.currentWaypointIndex > 0 && (
+        {boat.boatOnline && mission.currentWaypointIndex > 0 && (
           <Polyline
             positions={[
               [boat.position.lat, boat.position.lng],
@@ -541,7 +559,7 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
           );
         })()}
 
-        <Marker position={[boat.position.lat, boat.position.lng]} icon={boatIcon} />
+        {boat.boatOnline && <Marker position={[boat.position.lat, boat.position.lng]} icon={boatIcon} />}
 
         {userLocation && (
           <Marker position={[userLocation.lat, userLocation.lng]} icon={userLocationIcon} />
@@ -560,9 +578,15 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => setMapCenter(boat.position.lat, boat.position.lng)}
+            onClick={() => {
+              if (boat.boatOnline) {
+                setMapCenter(boat.position.lat, boat.position.lng);
+              } else {
+                fallbackCenter();
+              }
+            }}
             className="bg-panel/70 backdrop-blur-xl rounded-lg px-3 py-1.5 border border-panel-border/50 hover:bg-panel/90 transition-colors text-xs text-white/50 hover:text-white/70"
-            title="Center on boat"
+            title={boat.boatOnline ? 'Center on boat' : userLocation ? 'Center on your location' : 'Center on Austin, TX'}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="Center on boat">
               <title>Center on boat</title>
@@ -573,13 +597,16 @@ function MapContent({ L, RL, boat, mission, addWaypoint }: MapContentProps) {
               <line x1="18" y1="12" x2="22" y2="12" />
             </svg>
           </button>
-          <button
-            type="button"
-            onClick={() => setMapMode(mapMode === 'map' ? 'satellite' : 'map')}
-            className="bg-panel/70 backdrop-blur-xl rounded-lg px-3 py-1.5 border border-panel-border/50 hover:bg-panel/90 transition-colors text-xs text-white/50 hover:text-white/70"
+          <select
+            value={mapMode}
+            onChange={(event) => setMapMode(event.target.value as MapMode)}
+            className="bg-panel/70 backdrop-blur-xl rounded-lg px-3 py-1.5 border border-panel-border/50 hover:bg-panel/90 transition-colors text-xs text-white/60 hover:text-white/80 outline-none"
+            title="Map layer"
           >
-            {mapMode === 'map' ? 'Satellite' : 'Map'}
-          </button>
+            <option value="map">Map</option>
+            <option value="satellite">Satellite</option>
+            <option value="bathymetry">Bathymetry</option>
+          </select>
         </div>
 
         {gpsCalibration.message && (
