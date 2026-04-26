@@ -146,7 +146,13 @@ function nextOccurrence(startAt: number, repeat: ScheduleRepeat, now: number): n
   return startAt + periods * interval;
 }
 
-export function NavigationProvider({ children }: { children: React.ReactNode }) {
+export function NavigationProvider({
+  children,
+  boatKey,
+}: {
+  children: React.ReactNode;
+  boatKey: string | null;
+}) {
   const [mapCenter, setMapCenterState] = useState({ ...DEFAULT_LAKE_CENTER, _v: 0 });
   const [viewMode, setViewMode] = useState<ViewMode>('2d');
   const [measurementType, setMeasurementType] = useState<MeasurementType>('depth');
@@ -164,7 +170,7 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
     setCameraSettings,
     setMotorConfig,
     setNavParams,
-  } = useBoatMqtt();
+  } = useBoatMqtt(boatKey);
 
   // Swap the live MQTT boat state for the replay-synthesized state when
   // the user is scrubbing through history. All downstream panels read

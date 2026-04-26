@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useState, type FormEvent } from 'react';
 import { NavigationProvider, useNavigation } from './context/NavigationContext';
 import { ReplayProvider } from './context/ReplayContext';
 import { ErrorBanner, Sidebar, TelemetryPanel } from './components';
@@ -9,6 +9,57 @@ import './App.css';
 
 const MapView = lazy(() => import('./components/MapView'));
 const LakeView3D = lazy(() => import('./components/LakeView3D'));
+const BOAT_KEY_STORAGE_KEY = 'castaway:boatKey';
+
+function loadBoatKey() {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(BOAT_KEY_STORAGE_KEY);
+}
+
+function BoatKeyGate({ onUnlock }: { onUnlock: (key: string) => void }) {
+  const [value, setValue] = useState('');
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const key = value.trim();
+    if (!key) return;
+    window.localStorage.setItem(BOAT_KEY_STORAGE_KEY, key);
+    onUnlock(key);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-[#070910] px-4">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-sm rounded-2xl border border-white/10 bg-panel/80 p-5 shadow-2xl shadow-black/50 backdrop-blur-xl"
+      >
+        <div className="mb-4">
+          <h1 className="text-lg font-semibold tracking-tight text-white/90">Castaway</h1>
+          <p className="mt-1 text-sm leading-5 text-white/50">Enter the boat key to connect live telemetry and controls.</p>
+        </div>
+        <label className="block text-[11px] font-medium uppercase tracking-[0.16em] text-white/40" htmlFor="boat-key">
+          Boat key
+        </label>
+        <input
+          id="boat-key"
+          type="password"
+          autoComplete="current-password"
+          autoFocus
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          className="mt-2 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-300/15"
+        />
+        <button
+          type="submit"
+          className="mt-4 w-full rounded-xl bg-cyan-300 px-3 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!value.trim()}
+        >
+          Connect
+        </button>
+      </form>
+    </div>
+  );
+}
 
 function AppInner() {
   const [cameraLive, setCameraLive] = useState(false);
@@ -139,11 +190,17 @@ function AppInner() {
 }
 
 export default function App() {
+  const [boatKey, setBoatKey] = useState(loadBoatKey);
+
+  if (!boatKey && !import.meta.env.VITE_MQTT_PASS) {
+    return <BoatKeyGate onUnlock={setBoatKey} />;
+  }
+
   // ReplayProvider wraps NavigationProvider because the latter consumes
   // replay state to swap the boat snapshot when scrubbing through history.
   return (
     <ReplayProvider>
-      <NavigationProvider>
+      <NavigationProvider boatKey={boatKey}>
         <AppInner />
       </NavigationProvider>
     </ReplayProvider>

@@ -204,7 +204,7 @@ function createChannel<T>() {
   };
 }
 
-export function useBoatMqtt() {
+export function useBoatMqtt(boatKey: string | null) {
   const [boat, setBoat] = useState<BoatState>(DEFAULT_BOAT_STATE);
   const [camera, setCamera] = useState<CameraSettings>(DEFAULT_CAMERA_SETTINGS);
   // Motor + nav configs are owned by the firmware (it persists them to disk).
@@ -283,9 +283,9 @@ export function useBoatMqtt() {
     const host = import.meta.env.VITE_MQTT_HOST;
     const port = import.meta.env.VITE_MQTT_WS_PORT;
     const username = import.meta.env.VITE_MQTT_USER || '';
-    const password = import.meta.env.VITE_MQTT_PASS || '';
+    const password = boatKey || import.meta.env.VITE_MQTT_PASS || '';
 
-    if (!host || !port) return;
+    if (!host || !port || !password) return;
 
     const resetHeartbeat = () => {
       if (heartbeatTimer.current) clearTimeout(heartbeatTimer.current);
@@ -435,7 +435,7 @@ export function useBoatMqtt() {
       if (mqttDisconnectTimer.current) clearTimeout(mqttDisconnectTimer.current);
       if (pingTimer) clearInterval(pingTimer);
     };
-  }, []);
+  }, [boatKey]);
 
   // Smooth interpolation via requestAnimationFrame
   useEffect(() => {
