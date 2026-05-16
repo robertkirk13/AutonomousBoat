@@ -1,6 +1,8 @@
-# AutonomousBoat - BoatCore V1.0
+# AutonomousBoat V1.0
 
-Autonomous boat firmware (Rust/tokio) + React dashboard for Raspberry Pi Zero 2W with custom BoatCore V1.0 PCB.
+![Image of the boat](https://www.robertjkirk.com/_astro/HeroImage.BFgRfW71_bpQck.webp)
+
+Autonomous boat firmware (Rust/tokio) + React dashboard for Raspberry Pi Zero 2W with custom Wilson PCB.
 
 ## Repo Layout
 
